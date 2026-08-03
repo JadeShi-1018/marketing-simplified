@@ -188,6 +188,101 @@ class TestBudgetRequestApprovalPermissions:
 
 @pytest.mark.django_db
 @pytest.mark.timeout(600)
+class TestOrgAdminApprovalOverridePermissions:
+    """MED-240: org-admin can approve outside the chain; non-admins unchanged.
+
+    Matrix:
+      - chain approver (user2)     → already covered above (can approve)
+      - non-chain member (user3)   → already covered (403)
+      - request owner (user1)      → already covered (403)
+      - org-admin (not approver)   → MUST be allowed (this class)
+      - superuser                  → already covered
+    """
+
+    def test_org_admin_can_approve_outside_chain(
+        self, api_client, org_admin, budget_request_under_review, team, user2
+    ):
+        """Org-admin who is NOT current_approver can still approve (override)."""
+        assert budget_request_under_review.current_approver_id == user2.id
+        assert org_admin.id != user2.id
+
+        api_client.force_authenticate(user=org_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse('budget-request-decision', kwargs={'pk': budget_request_under_review.id})
+        response = api_client.patch(
+            url,
+            {'decision': 'approve', 'comment': 'Org-admin override'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        budget_request_under_review.refresh_from_db()
+        assert budget_request_under_review.status == BudgetRequestStatus.APPROVED
+
+    def test_org_admin_can_reject_outside_chain(
+        self, api_client, org_admin, budget_request_under_review, team, user2
+    ):
+        """Org-admin who is NOT current_approver can reject (override)."""
+        assert budget_request_under_review.current_approver_id == user2.id
+
+        api_client.force_authenticate(user=org_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse('budget-request-decision', kwargs={'pk': budget_request_under_review.id})
+        response = api_client.patch(
+            url,
+            {'decision': 'reject', 'comment': 'Org-admin override reject'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        budget_request_under_review.refresh_from_db()
+        assert budget_request_under_review.status == BudgetRequestStatus.REJECTED
+
+    def test_approval_permission_object_allows_org_admin(
+        self, org_admin, budget_request_under_review, user2
+    ):
+        """Unit: ApprovalPermission.has_object_permission is True for org-admin."""
+        assert budget_request_under_review.current_approver_id == user2.id
+        assert org_admin.id != user2.id
+
+        permission = ApprovalPermission()
+        request = type('Req', (), {
+            'user': org_admin,
+            'method': 'PATCH',
+            'headers': {'x-user-role': 'org_admin'},
+        })()
+        assert permission.has_object_permission(
+            request, None, budget_request_under_review
+        ) is True
+
+    def test_approval_permission_object_denies_non_chain_non_admin(
+        self, user3, budget_request_under_review, user2, user_role3, role_permissions
+    ):
+        """Unit: non-admin who is not current_approver is still denied."""
+        assert budget_request_under_review.current_approver_id == user2.id
+        assert user3.id != user2.id
+
+        permission = ApprovalPermission()
+        request = type('Req', (), {
+            'user': user3,
+            'method': 'PATCH',
+            'headers': {'x-user-role': 'team_member', 'x-team-id': '1'},
+        })()
+        assert permission.has_object_permission(
+            request, None, budget_request_under_review
+        ) is False
+
+
+@pytest.mark.django_db
+@pytest.mark.timeout(600)
 class TestBudgetPoolPermissions:
     """Test budget pool permissions"""
     

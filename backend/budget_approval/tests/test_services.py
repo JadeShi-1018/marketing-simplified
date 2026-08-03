@@ -339,6 +339,22 @@ class TestProcessApproval:
             )
         assert result.status == BudgetRequestStatus.APPROVED
 
+    def test_org_admin_can_bypass_approver_check(
+        self, budget_request_under_review, org_admin, user2
+    ):
+        """MED-240: org-admin may process approval even when not current_approver."""
+        assert budget_request_under_review.current_approver_id == user2.id
+        assert org_admin.id != user2.id
+
+        with patch('budget_approval.services.budget_notifications'):
+            result = BudgetRequestService.process_approval(
+                budget_request_under_review,
+                org_admin,
+                is_approved=True,
+                comment="Org-admin override",
+            )
+        assert result.status == BudgetRequestStatus.APPROVED
+
     def test_raises_when_not_under_review(self, budget_request_draft, user2):
         with pytest.raises(ValidationError, match="cannot be processed"):
             BudgetRequestService.process_approval(
