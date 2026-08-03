@@ -53,7 +53,7 @@ from .services import (
     UnsupportedAttachmentMimeType,
     validate_attachment_mime_type,
 )
-from .tasks import notify_message_recipients, notify_new_message, send_scheduled_message
+from .tasks import notify_message_recipients, notify_new_message, notify_pin_update, send_scheduled_message
 from core.models import ProjectMember
 from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin
 
@@ -195,34 +195,23 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         return ChatService.is_channel_manager(chat, user)
 
     def _notify_pin_update(self, chat, action, message_id, pin_data=None):
-        """Broadcast shared pin changes to every active channel member."""
-        from asgiref.sync import async_to_sync
-        from channels.layers import get_channel_layer
+        """Queue a shared pin change for broadcast to every active member.
 
-        try:
-            channel_layer = get_channel_layer()
-            if not channel_layer:
-                return
-            event = {
-                'type': 'pin_update',
-                'action': action,
-                'chat_id': chat.id,
-                'message_id': message_id,
-                'pin': pin_data,
-            }
-            participant_ids = ChatParticipant.objects.filter(
-                chat=chat,
-                is_active=True,
-            ).values_list('user_id', flat=True)
-            for participant_id in participant_ids:
-                async_to_sync(channel_layer.group_send)(
-                    f'chat_user_{participant_id}',
-                    event,
-                )
-        except Exception:
-            # A notification transport failure must never roll back a pin that
-            # has already been persisted successfully.
-            logger.exception('Failed to broadcast pin update for chat %s', chat.id)
+        Fan-out runs on the dedicated realtime worker rather than inside the
+        request: a large channel would otherwise cost one sequential Channels
+        publication per member before the caller gets a response.
+        """
+        chat_id = chat.id
+
+        def enqueue() -> None:
+            try:
+                notify_pin_update.delay(chat_id, action, message_id, pin_data)
+            except Exception:
+                # A broker failure must never roll back a pin that has already
+                # been persisted successfully.
+                logger.exception('Failed to queue pin update for chat %s', chat_id)
+
+        transaction.on_commit(enqueue)
     
     def get_queryset(self):
         """Get chats where user is a participant"""
@@ -1014,11 +1003,25 @@ class MessageViewSet(viewsets.ModelViewSet):
             message = serializer.save()
             created = getattr(serializer, '_message_created', True)
 
+            # The response embeds one delivery status per recipient, each with a
+            # nested user. Without prefetching that user, sending into a large
+            # channel costs one extra query per recipient inside the request.
             message = Message.objects.select_related(
                 'sender', 'reply_to', 'reply_to__sender'
-            ).prefetch_related('attachments').get(id=message.id)
+            ).prefetch_related('attachments', 'statuses__user').get(id=message.id)
 
-            response_serializer = MessageWithAttachmentsSerializer(message, context={'request': request})
+            # One batched presence read instead of one per embedded status user.
+            presence_user_ids = {status.user_id for status in message.statuses.all()}
+            presence_user_ids.add(message.sender_id)
+            response_serializer = MessageWithAttachmentsSerializer(
+                message,
+                context={
+                    'request': request,
+                    'online_user_ids': set(
+                        OnlineStatusService.get_online_users(list(presence_user_ids))
+                    ),
+                },
+            )
             logger.info(
                 "Message %s %s successfully with %s attachments",
                 message.id,

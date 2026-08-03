@@ -5,7 +5,9 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.utils import timezone
 from django.core.cache import cache
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework.throttling import ScopedRateThrottle
@@ -1038,3 +1040,59 @@ class AttachmentMimeUploadAPITest(TestCase):
         self.assertEqual(response.data['mime_type'], 'application/zip')
         self.assertIn('Unsupported MIME type', response.data['error'])
         self.assertEqual(MessageAttachment.objects.count(), initial_count)
+
+
+class TestMessageCreateQueryScaling:
+    """The send endpoint must not scale its query count with channel size."""
+
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        self.organization = Organization.objects.create(name='Send Scaling Organization')
+        self.project = Project.objects.create(
+            name='Send Scaling Project',
+            organization=self.organization,
+        )
+        self.client = APIClient()
+
+    def _build_channel(self, label, member_count):
+        chat = Chat.objects.create(
+            project=self.project,
+            type=ChatType.GROUP,
+            name=f'send-scaling-{label}',
+        )
+        members = []
+        for index in range(member_count):
+            user = User.objects.create_user(
+                email=f'scale-{label}-{index}@example.com',
+                username=f'scale-{label}-{index}',
+                password='testpass123',
+            )
+            members.append(user)
+            ChatParticipant.objects.create(chat=chat, user=user, is_active=True)
+        return chat, members
+
+    def _send_query_count(self, chat, sender):
+        self.client.force_authenticate(user=sender)
+        payload = {'chat': chat.id, 'content': 'scaling probe'}
+        # Warm anything cached per sender so only the steady-state cost is compared.
+        self.client.post(reverse('message-list'), payload, format='json')
+
+        with CaptureQueriesContext(connection) as captured:
+            response = self.client.post(reverse('message-list'), payload, format='json')
+
+        assert response.status_code == status.HTTP_201_CREATED
+        return len(captured)
+
+    def test_send_query_count_does_not_grow_with_channel_size(self):
+        """The response embeds one status per recipient, each with a nested user.
+
+        Without prefetching that user the send request costs an extra query per
+        recipient, which is what made large channels slow under concurrency.
+        """
+        small_chat, small_members = self._build_channel('small', 4)
+        large_chat, large_members = self._build_channel('large', 20)
+
+        small_queries = self._send_query_count(small_chat, small_members[0])
+        large_queries = self._send_query_count(large_chat, large_members[0])
+
+        assert large_queries == small_queries

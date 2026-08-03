@@ -97,6 +97,12 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'username', 'email', 'first_name', 'last_name', 'avatar']
 
     def get_is_online(self, obj):
+        # Callers that serialize many users at once can pass a precomputed set
+        # under `online_user_ids` to avoid one Redis round trip per user. The
+        # per-user lookup stays the default so existing callers are unaffected.
+        online_user_ids = self.context.get('online_user_ids')
+        if online_user_ids is not None:
+            return obj.id in online_user_ids
         from .services import OnlineStatusService
         return OnlineStatusService.is_online(obj.id)
 

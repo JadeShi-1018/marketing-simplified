@@ -11,6 +11,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from chat.models import Chat, ChatParticipant, ChatType, Message, PinnedMessage
+from chat.tasks import notify_pin_update
 from core.models import Organization, Project
 
 
@@ -472,3 +473,68 @@ class TestPinnedMessagesAPI:
         assert pin_response.status_code == status.HTTP_403_FORBIDDEN
         assert unpin_response.status_code == status.HTTP_403_FORBIDDEN
         assert PinnedMessage.objects.filter(pk=pin.pk).exists()
+
+    def test_pin_queues_broadcast_instead_of_publishing_in_request(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
+        """Fan-out belongs on the realtime worker, not the request thread.
+
+        A channel with many members would otherwise cost one sequential Channels
+        publication per member before the caller receives a response. The commit
+        hook runs inline under autocommit; the test wraps it in a transaction, so
+        the callbacks have to be executed explicitly.
+        """
+        with patch('chat.views.notify_pin_update') as queued_task:
+            with django_capture_on_commit_callbacks(execute=True):
+                response = self.client.post(
+                    self.pin_url(),
+                    {'message_id': self.message.id},
+                    format='json',
+                )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        queued_task.delay.assert_called_once()
+        chat_id, action, message_id, pin_data = queued_task.delay.call_args.args
+        assert chat_id == self.chat.id
+        assert action == 'pinned'
+        assert message_id == self.message.id
+        assert pin_data['message']['id'] == self.message.id
+
+    def test_unpin_queues_broadcast_instead_of_publishing_in_request(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
+        PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.message,
+            pinned_by=self.manager,
+        )
+
+        with patch('chat.views.notify_pin_update') as queued_task:
+            with django_capture_on_commit_callbacks(execute=True):
+                response = self.client.delete(self.unpin_url())
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        queued_task.delay.assert_called_once_with(
+            self.chat.id,
+            'unpinned',
+            self.message.id,
+            None,
+        )
+
+    def test_queued_pin_broadcast_reaches_every_active_member(self):
+        """The task must still fan out to all active members, online or not."""
+        pin_data = {'id': 1, 'message': {'id': self.message.id}}
+
+        with patch('chat.tasks.broadcast_event_to_user_groups_sync') as broadcast:
+            broadcast.return_value = ([], {})
+            notify_pin_update(self.chat.id, 'pinned', self.message.id, pin_data)
+
+        recipients = broadcast.call_args.args[1]
+        event = broadcast.call_args.args[2]
+        assert set(recipients) == {self.manager.id, self.member.id}
+        assert event['type'] == 'pin_update'
+        assert event['action'] == 'pinned'
+        assert event['chat_id'] == self.chat.id
+        assert event['pin'] == pin_data
