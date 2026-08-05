@@ -60,10 +60,16 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
   const [forwardApprover, setForwardApprover] = useState<number | null>(null);
 
   const currentUser = useAuthStore((s) => s.user);
-  const isApprover =
+  const isCurrentApprover =
     currentUser?.id != null &&
     task.current_approver?.id != null &&
     Number(currentUser.id) === Number(task.current_approver.id);
+  // MED-240: same-org org-admin may approve/reject budget tasks outside the chain.
+  const isOrgAdmin = Boolean(currentUser?.is_org_admin);
+  const canApprove =
+    isCurrentApprover || (isOrgAdmin && task.type === 'budget');
+  const isAdminOverride =
+    isOrgAdmin && !isCurrentApprover && task.type === 'budget';
 
   const isOwner =
     currentUser?.id != null &&
@@ -174,26 +180,38 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
       });
       break;
     case 'SUBMITTED':
-      if (isApprover) {
+      if (isCurrentApprover) {
         buttons.push({ label: 'Start Review', variant: 'primary', action: () => run(() => TaskAPI.startReview(id)) });
       }
-      if (isApprover || isOwner) {
+      if (isCurrentApprover || isOwner) {
         buttons.push({ label: 'Cancel', variant: 'danger', action: () => run(() => TaskAPI.cancelTask(id)) });
       }
       break;
     case 'UNDER_REVIEW':
-      if (isApprover) {
+      if (canApprove) {
         buttons.push({
           label: 'Approve',
           variant: 'primary',
+          title: isAdminOverride
+            ? 'Org-admin override — approve outside the approval chain'
+            : undefined,
           action: () => run(() => TaskAPI.makeApproval(id, { action: 'approve' })),
         });
-        buttons.push({ label: 'Reject', variant: 'danger', action: () => setRejectOpen(true) });
+        buttons.push({
+          label: 'Reject',
+          variant: 'danger',
+          title: isAdminOverride
+            ? 'Org-admin override — reject outside the approval chain'
+            : undefined,
+          action: () => setRejectOpen(true),
+        });
+      }
+      if (isCurrentApprover) {
         buttons.push({ label: 'Cancel', variant: 'danger', action: () => run(() => TaskAPI.cancelTask(id)) });
       }
       break;
     case 'APPROVED':
-      if (isApprover) {
+      if (isCurrentApprover) {
         buttons.push({ label: 'Lock', variant: 'primary', action: () => run(() => TaskAPI.lock(id)) });
         buttons.push({ label: 'Forward', variant: 'ghost', action: () => setForwardOpen(true) });
         buttons.push({ label: 'Cancel', variant: 'danger', action: () => run(() => TaskAPI.cancelTask(id)) });
@@ -204,7 +222,7 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
       buttons.push({ label: 'Revise', variant: 'primary', action: () => run(() => TaskAPI.revise(id)) });
       break;
     case 'LOCKED':
-      if (isApprover) {
+      if (isCurrentApprover) {
         buttons.push({ label: 'Unlock', variant: 'ghost', action: () => run(() => TaskAPI.unlock(id)) });
       }
       break;

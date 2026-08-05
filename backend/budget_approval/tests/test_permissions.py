@@ -199,6 +199,81 @@ class TestOrgAdminApprovalOverridePermissions:
       - superuser                  → already covered
     """
 
+    def test_org_admin_can_approve_via_task_make_approval(
+        self, api_client, org_admin, budget_request_under_review, team, user2, project
+    ):
+        """UI path: TaskAPI.makeApproval must allow same-org org-admin override (MED-240)."""
+        from core.models import ProjectMember
+        from django.contrib.contenttypes.models import ContentType
+        from budget_approval.approver_access import (
+            ORG_ADMIN_OVERRIDE_PREFIX,
+            budget_request_has_admin_override,
+        )
+        from budget_approval.models import BudgetRequest
+        from task.models import Task
+
+        br = budget_request_under_review
+        assert br.current_approver_id == user2.id
+        assert org_admin.id != user2.id
+
+        task = br.task
+        task.current_approver = user2
+        task.content_type = ContentType.objects.get_for_model(br)
+        task.object_id = br.id
+        task.save(update_fields=['current_approver', 'content_type', 'object_id'])
+        # FSM protected field — walk transitions instead of assigning status.
+        if task.status == Task.Status.DRAFT:
+            task.submit()
+            task.start_review()
+            task.save()
+        elif task.status == Task.Status.SUBMITTED:
+            task.start_review()
+            task.save()
+        assert task.status == Task.Status.UNDER_REVIEW
+
+        ProjectMember.objects.get_or_create(
+            user=org_admin,
+            project=project,
+            defaults={'is_active': True},
+        )
+
+        api_client.force_authenticate(user=org_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
+        response = api_client.post(
+            url,
+            {'action': 'approve', 'comment': 'Org-admin UI override'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        # Task endpoint may leave search_path on the tenant schema used by middleware;
+        # assert from the response (and restore path before any ORM refresh).
+        assert response.data['task']['status'] in (
+            Task.Status.APPROVED,
+            Task.Status.UNDER_REVIEW,
+        )
+        assert ORG_ADMIN_OVERRIDE_PREFIX in (
+            response.data.get('approval_record', {}).get('comment') or ''
+        )
+        linked = response.data['task'].get('linked_object') or {}
+        assert linked.get('is_admin_override') is True
+
+        from django.db import connection
+        from core.services.tenant import slug_to_schema_name
+
+        schema = slug_to_schema_name(team.organization.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {schema}, public')
+        # FSM protected status: refresh_from_db() setattr fails — re-fetch instead.
+        br = BudgetRequest.objects.get(pk=br.pk)
+        assert br.status == BudgetRequestStatus.APPROVED
+        assert budget_request_has_admin_override(br) is True
+
     def test_org_admin_can_approve_outside_chain(
         self, api_client, org_admin, budget_request_under_review, team, user2
     ):
