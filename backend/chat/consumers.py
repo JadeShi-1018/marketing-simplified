@@ -551,16 +551,21 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'version': version,
                 'timestamp': timezone.now().isoformat(),
             }
-            await asyncio.gather(*(
-                self.channel_layer.group_send(
-                    f'chat_user_{participant_id}',
-                    event,
-                )
-                for participant_id in recipient_ids
-            ))
+            # Bounded fan-out, same helper the message path uses. A raw gather
+            # here published to every peer at once, which put a spike of one
+            # message per peer into the channel layer on every connect — with
+            # N members of one channel reconnecting together that is N^2
+            # publishes competing with message delivery for the same queue. It
+            # also cancelled the remaining sends when any one of them raised.
+            _, publish_failures = await broadcast_event_to_user_groups(
+                self.channel_layer,
+                recipient_ids,
+                event,
+            )
             logger.debug(
                 f"[WebSocket] Presence update for user {self.user_id} sent to "
-                f"{len(recipient_ids)} recipient(s): is_online={is_online}"
+                f"{len(recipient_ids)} recipient(s): is_online={is_online}, "
+                f"failures={len(publish_failures)}"
             )
         except Exception as e:
             logger.error(f"Error broadcasting presence update for user {self.user_id}: {e}")
