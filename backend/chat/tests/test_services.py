@@ -8,12 +8,14 @@ from django.test import TestCase
 from core.models import Organization, Project, ProjectMember
 from chat.models import Chat, ChatParticipant, ChatType
 from chat.serializers import ChatCreateSerializer
+from chat.models import Message, MessageStatus
 from chat.services import (
     ChatService,
-    MessageDeliveryClaimService,
     MessageService,
     OnlineStatusService,
     UnsupportedAttachmentMimeType,
+    claim_recipients_for_delivery,
+    release_unpublished_recipients,
     validate_attachment_mime_type,
 )
 pytestmark = pytest.mark.django_db
@@ -21,23 +23,61 @@ pytestmark = pytest.mark.django_db
 User = get_user_model()
 
 
-def test_message_delivery_claim_prevents_concurrent_publish():
-    message_id = 987654
-    user_id = 456789
-    cache.delete(MessageDeliveryClaimService._claim_key(message_id, user_id))
+def _message_with_pending_recipient():
+    organization = Organization.objects.create(name='Claim Org')
+    project = Project.objects.create(name='Claim Project', organization=organization)
+    chat = Chat.objects.create(project=project, type=ChatType.GROUP)
+    sender = User.objects.create_user(
+        email='claim_sender@example.com', username='claim_sender', password='pass12345'
+    )
+    recipient = User.objects.create_user(
+        email='claim_recipient@example.com', username='claim_recipient', password='pass12345'
+    )
+    for user in (sender, recipient):
+        ChatParticipant.objects.create(chat=chat, user=user, is_active=True)
+    message = Message.objects.create(chat=chat, sender=sender, content='claim test')
+    MessageStatus.objects.create(message=message, user=recipient, status='sent')
+    return message, recipient
 
-    first_token = MessageDeliveryClaimService.acquire(message_id, user_id)
-    assert first_token
-    assert MessageDeliveryClaimService.acquire(message_id, user_id) is None
 
-    # A stale/incorrect owner cannot release the active claim.
-    MessageDeliveryClaimService.release(message_id, user_id, 'wrong-token')
-    assert MessageDeliveryClaimService.acquire(message_id, user_id) is None
+def test_delivery_claim_is_taken_once():
+    """Only the first claimer of a recipient may publish.
 
-    MessageDeliveryClaimService.release(message_id, user_id, first_token)
-    second_token = MessageDeliveryClaimService.acquire(message_id, user_id)
-    assert second_token
-    MessageDeliveryClaimService.release(message_id, user_id, second_token)
+    All three delivery paths — realtime fan-out, offline delivery and reconnect
+    recovery — claim by winning the sent -> delivered transition, so a second
+    claimer must come back empty rather than publishing a duplicate.
+    """
+    message, recipient = _message_with_pending_recipient()
+
+    assert claim_recipients_for_delivery(message.id, [recipient.id]) == [recipient.id]
+    assert claim_recipients_for_delivery(message.id, [recipient.id]) == []
+
+    status = MessageStatus.objects.get(message=message, user=recipient)
+    assert status.status == 'delivered'
+    assert status.delivered_at is not None
+
+
+def test_releasing_an_unpublished_claim_makes_it_claimable_again():
+    """A claim handed back must be available to the next delivery attempt."""
+    message, recipient = _message_with_pending_recipient()
+
+    claim_recipients_for_delivery(message.id, [recipient.id])
+    assert release_unpublished_recipients(message.id, [recipient.id]) == 1
+
+    status = MessageStatus.objects.get(message=message, user=recipient)
+    assert status.status == 'sent'
+    assert status.delivered_at is None
+    assert claim_recipients_for_delivery(message.id, [recipient.id]) == [recipient.id]
+
+
+def test_claim_ignores_recipients_already_delivered():
+    """Releasing is scoped to what this caller claimed, not everything delivered."""
+    message, recipient = _message_with_pending_recipient()
+
+    claim_recipients_for_delivery(message.id, [recipient.id])
+    # A user this caller never claimed must not be resurrected.
+    assert release_unpublished_recipients(message.id, [999_999]) == 0
+    assert MessageStatus.objects.get(message=message, user=recipient).status == 'delivered'
 
 class TestOnlineStatusService:
 

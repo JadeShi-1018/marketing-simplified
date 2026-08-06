@@ -12,9 +12,10 @@ from .models import Chat, ChatParticipant, Message, MessageStatus
 from .realtime import broadcast_event_to_user_groups
 from .services import (
     ChatService,
-    MessageDeliveryClaimService,
     MessageService,
     OnlineStatusService,
+    claim_recipients_for_delivery,
+    release_unpublished_recipients,
 )
 from .tasks import (
     build_realtime_message_payload,
@@ -367,41 +368,42 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
     
     async def send_queued_messages(self):
-        """Send any queued messages for this user"""
+        """Send this user's pending messages, claiming each before writing it."""
         claimed_messages = []
-        delivered_message_ids = []
+        sent_message_ids = []
         try:
             claimed_messages = await database_sync_to_async(
                 self.get_claimed_queued_messages
             )()
-            
+
             for claimed in claimed_messages:
                 await self.send(text_data=json.dumps({
                     'type': 'chat_message',
                     'message': claimed['message'],
                 }))
-                delivered_message_ids.append(claimed['message_id'])
+                sent_message_ids.append(claimed['message_id'])
 
         except Exception as e:
             logger.error(f"Error sending queued messages: {e}")
         finally:
-            try:
-                if delivered_message_ids:
-                    updated = await database_sync_to_async(
-                        self._mark_messages_delivered
-                    )(delivered_message_ids)
-                    logger.info(
-                        "Queued message recovery: user=%s claimed=%s sent=%s updated=%s",
-                        self.user_id,
-                        len(claimed_messages),
-                        len(delivered_message_ids),
-                        updated,
-                    )
-            finally:
-                await sync_to_async(
-                    self._release_delivery_claims,
-                    thread_sensitive=False,
-                )(claimed_messages)
+            # Claiming already marked these delivered, so only the ones we did
+            # not manage to write need handing back.
+            unsent = [
+                claimed['message_id'] for claimed in claimed_messages
+                if claimed['message_id'] not in set(sent_message_ids)
+            ]
+            released = 0
+            if unsent:
+                released = await database_sync_to_async(
+                    self._release_unsent_messages
+                )(unsent)
+            logger.info(
+                "Queued message recovery: user=%s claimed=%s sent=%s released=%s",
+                self.user_id,
+                len(claimed_messages),
+                len(sent_message_ids),
+                released,
+            )
     
     # Channel layer handlers (called by group_send)
     
@@ -587,27 +589,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         message = Message.objects.get(id=message_id)
         MessageService.mark_message_as_delivered(message, self.user)
 
-    def _mark_messages_delivered(self, message_ids):
-        """Bulk-mark successfully written queued WebSocket messages delivered."""
-        delivered_at = timezone.now()
-        return MessageStatus.objects.filter(
-            message_id__in=message_ids,
-            user=self.user,
-            status='sent',
-        ).update(
-            status='delivered',
-            delivered_at=delivered_at,
-            updated_at=delivered_at,
-        )
+    def _release_unsent_messages(self, message_ids):
+        """Hand back rows we claimed but never wrote to the socket.
 
-    def _release_delivery_claims(self, claimed_messages):
-        for claimed in claimed_messages:
-            MessageDeliveryClaimService.release(
-                claimed['message_id'],
-                self.user.id,
-                claimed['claim_token'],
-            )
-    
+        Claiming marks the row delivered, so anything the send did not reach
+        has to go back to 'sent' or the delivery task will consider it done.
+        """
+        released = 0
+        for message_id in message_ids:
+            released += release_unpublished_recipients(message_id, [self.user.id])
+        return released
+
+
     def get_message_sender(self, message_id):
         """Get the sender ID of a message"""
         message = Message.objects.get(id=message_id)
@@ -620,24 +613,24 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return [build_realtime_message_payload(status.message) for status in statuses]
 
     def get_claimed_queued_messages(self):
-        """Claim one bounded reconnect page so a Celery retry cannot race it."""
+        """Claim one bounded reconnect page so the delivery task cannot race it.
+
+        Uses the same claim as the other two delivery paths — winning the
+        ``sent -> delivered`` transition — so whichever path gets there first
+        is the only one that publishes. Anything we then fail to send is handed
+        back by ``send_queued_messages``.
+        """
         claimed_messages = []
         for status in self._get_queued_statuses():
-            token = MessageDeliveryClaimService.acquire(status.message_id, self.user.id)
-            if not token:
+            if not claim_recipients_for_delivery(status.message_id, [self.user.id]):
                 continue
             try:
                 claimed_messages.append({
                     'message_id': status.message_id,
-                    'claim_token': token,
                     'message': build_realtime_message_payload(status.message),
                 })
             except Exception:
-                MessageDeliveryClaimService.release(
-                    status.message_id,
-                    self.user.id,
-                    token,
-                )
+                release_unpublished_recipients(status.message_id, [self.user.id])
                 raise
         return claimed_messages
 

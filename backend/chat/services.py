@@ -1,7 +1,7 @@
 import logging
 import os
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import IntegrityError, transaction
@@ -114,63 +114,59 @@ def sync_message_mentions(message: Message, mention_ids: list[int]) -> None:
     return list(new_ids)
 
 
-class MessageDeliveryClaimService:
-    """Best-effort cross-process claim for one user/message delivery.
+def claim_recipients_for_delivery(message_id: int, user_ids: List[int]) -> List[int]:
+    """Take ownership of a message's delivery to these users, and return who we won.
 
-    The reconnect consumer and ``deliver_message_task`` can observe the same
-    ``status='sent'`` row at the same time. A short Redis claim prevents both
-    paths from publishing it concurrently. PostgreSQL remains the durable
-    source of truth, and the claim expires automatically if a worker dies.
+    The single claim mechanism for all three delivery paths — the realtime
+    fan-out, the offline delivery task, and reconnect recovery. Winning the
+    ``sent -> delivered`` transition *is* the claim: whichever path moves the
+    row publishes, and the others find nothing left to take. The alternative,
+    a lock keyed per recipient, costs a round-trip each on the hot path.
+
+    ``skip_locked`` so a concurrent claimer takes the rows it can and leaves
+    the rest rather than blocking on them.
+
+    Callers must publish only to the returned users, and hand back anything
+    they failed to publish with ``release_unpublished_recipients`` — claiming
+    before publishing trades a duplicate delivery for a possible lost one.
     """
+    if not user_ids:
+        return []
 
-    CLAIM_KEY_PREFIX = 'chat_message_delivery_claim'
-    CLAIM_TIMEOUT_SECONDS = 30
-    RELEASE_SCRIPT = """
-        if redis.call('get', KEYS[1]) == ARGV[1] then
-            return redis.call('del', KEYS[1])
-        end
+    delivered_at = timezone.now()
+    with transaction.atomic():
+        claimed = list(
+            MessageStatus.objects
+            .select_for_update(skip_locked=True)
+            .filter(message_id=message_id, user_id__in=user_ids, status='sent')
+            .values_list('user_id', flat=True)
+        )
+        if claimed:
+            MessageStatus.objects.filter(
+                message_id=message_id,
+                user_id__in=claimed,
+            ).update(
+                status='delivered',
+                delivered_at=delivered_at,
+                updated_at=delivered_at,
+            )
+    return claimed
+
+
+def release_unpublished_recipients(message_id: int, user_ids: Iterable[int]) -> int:
+    """Return claimed rows whose publish did not happen, so a retry can take them."""
+    user_ids = list(user_ids)
+    if not user_ids:
         return 0
-    """
-
-    @classmethod
-    def _claim_key(cls, message_id: int, user_id: int) -> str:
-        return f'{cls.CLAIM_KEY_PREFIX}:{message_id}:{user_id}'
-
-    @classmethod
-    def acquire(cls, message_id: int, user_id: int) -> Optional[str]:
-        token = uuid.uuid4().hex
-        key = cls._claim_key(message_id, user_id)
-        try:
-            redis = get_redis_connection('default')
-            acquired = redis.set(
-                cache.make_key(key),
-                token,
-                nx=True,
-                ex=cls.CLAIM_TIMEOUT_SECONDS,
-            )
-        except Exception:
-            logger.exception(
-                'Failed to acquire message delivery claim: message=%s user=%s',
-                message_id,
-                user_id,
-            )
-            return None
-        return token if acquired else None
-
-    @classmethod
-    def release(cls, message_id: int, user_id: int, token: str) -> None:
-        key = cls._claim_key(message_id, user_id)
-        try:
-            # Compare-and-delete must be atomic: the original claim may expire
-            # while a send is in progress and a newer worker may own the key.
-            redis = get_redis_connection('default')
-            redis.eval(cls.RELEASE_SCRIPT, 1, cache.make_key(key), token)
-        except Exception:
-            logger.exception(
-                'Failed to release message delivery claim: message=%s user=%s',
-                message_id,
-                user_id,
-            )
+    return MessageStatus.objects.filter(
+        message_id=message_id,
+        user_id__in=user_ids,
+        status='delivered',
+    ).update(
+        status='sent',
+        delivered_at=None,
+        updated_at=timezone.now(),
+    )
 
 
 class OnlineStatusService:

@@ -12,7 +12,12 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
 from .realtime import broadcast_event_to_user_groups_sync
-from .services import ChatService, MessageDeliveryClaimService, OnlineStatusService
+from .services import (
+    ChatService,
+    OnlineStatusService,
+    claim_recipients_for_delivery,
+    release_unpublished_recipients,
+)
 from .url_helpers import build_messages_action_url
 
 User = get_user_model()
@@ -121,44 +126,28 @@ def deliver_message_task(self, message_id: int):
 
         pending_user_ids = [status['user_id'] for status in pending_statuses]
         online_user_ids = OnlineStatusService.get_online_users(pending_user_ids)
-        claims = {}
-        for user_id in online_user_ids:
-            token = MessageDeliveryClaimService.acquire(message_id, user_id)
-            if token:
-                claims[user_id] = token
+        claimed_user_ids = claim_recipients_for_delivery(message_id, online_user_ids)
 
-        if not claims:
+        if not claimed_user_ids:
             logger.info(
-                "deliver_message_task: message=%s pending=%s online=0 delivered=0",
+                "deliver_message_task: message=%s pending=%s online=%s delivered=0",
                 message_id,
                 len(pending_statuses),
+                len(online_user_ids),
             )
             return
 
         channel_layer = get_channel_layer()
-        try:
-            delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
-                channel_layer,
-                claims,
-                {
-                    'type': 'chat_message',
-                    'message': message_payload,
-                },
-            )
-            if delivered_user_ids:
-                delivered_at = timezone.now()
-                MessageStatus.objects.filter(
-                    message_id=message_id,
-                    user_id__in=delivered_user_ids,
-                    status='sent',
-                ).update(
-                    status='delivered',
-                    delivered_at=delivered_at,
-                    updated_at=delivered_at,
-                )
-        finally:
-            for user_id, token in claims.items():
-                MessageDeliveryClaimService.release(message_id, user_id, token)
+        delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
+            channel_layer,
+            claimed_user_ids,
+            {
+                'type': 'chat_message',
+                'message': message_payload,
+            },
+        )
+        # Back to pending, for this task's own retry or the user's next reconnect.
+        release_unpublished_recipients(message_id, publish_failures)
 
         logger.info(
             "deliver_message_task: message=%s pending=%s online=%s delivered=%s publish_failures=%s",
@@ -429,41 +418,7 @@ def notify_new_message(self, message_id: int):
         channel_layer = get_channel_layer()
         online_user_ids = OnlineStatusService.get_online_users(participant_ids)
 
-        # Claim recipients by moving their status row before publishing, not
-        # after.
-        #
-        # Three paths can deliver a message to a user: this task, the offline
-        # delivery task, and reconnect recovery. The other two take a Redis
-        # claim; this one used to publish first and only then mark the rows
-        # delivered, so anything reading in between saw 'sent' and delivered the
-        # message a second time. Winning the sent -> delivered transition *is*
-        # the claim here, which costs one statement rather than one Redis
-        # round-trip per recipient on the hot path.
-        #
-        # skip_locked so a concurrent claimer takes the rows it can and leaves
-        # the rest rather than waiting on the lock.
-        delivered_at = timezone.now()
-        with transaction.atomic():
-            claimed_user_ids = list(
-                MessageStatus.objects
-                .select_for_update(skip_locked=True)
-                .filter(
-                    message_id=message_id,
-                    user_id__in=online_user_ids,
-                    status='sent',
-                )
-                .values_list('user_id', flat=True)
-            )
-            if claimed_user_ids:
-                MessageStatus.objects.filter(
-                    message_id=message_id,
-                    user_id__in=claimed_user_ids,
-                ).update(
-                    status='delivered',
-                    delivered_at=delivered_at,
-                    updated_at=delivered_at,
-                )
-
+        claimed_user_ids = claim_recipients_for_delivery(message_id, online_user_ids)
         delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
             channel_layer,
             claimed_user_ids,
@@ -472,21 +427,9 @@ def notify_new_message(self, message_id: int):
                 'message': message_payload,
             },
         )
-
-        # Marking first trades a duplicate for a possible loss, so give the row
-        # back when the publish did not happen: the delivery task scheduled
-        # below then retries it as an ordinary pending recipient.
-        if publish_failures:
-            reverted_at = timezone.now()
-            MessageStatus.objects.filter(
-                message_id=message_id,
-                user_id__in=list(publish_failures),
-                status='delivered',
-            ).update(
-                status='sent',
-                delivered_at=None,
-                updated_at=reverted_at,
-            )
+        # The delivery task scheduled below picks these up as ordinary pending
+        # recipients.
+        release_unpublished_recipients(message_id, publish_failures)
 
         delivered_user_id_set = set(delivered_user_ids)
         pending_user_ids = [
