@@ -172,15 +172,22 @@ CHANNEL_LAYERS = {
             # the write, logs one INFO line, and raises nothing — the message is
             # simply never delivered.
             #
-            # Measured at 100 concurrent users in one channel: with the default,
-            # 78 of ~9,900 expected deliveries arrived and the layer logged
-            # "1 of 1 channels over capacity" 15,471 times. Raising this to
-            # 5,000 took deliveries to 2,457 in the same test.
+            # Measured at 100 concurrent users in one channel:
+            #
+            #   capacity    drops logged    delivered
+            #   100         15,471          78
+            #   10,000       5,533          2,568
+            #   50,000           0          4,161-4,503
             #
             # Queued messages expire after 60s, so this bounds memory rather
-            # than growing without limit: worst case roughly this many messages
-            # per ASGI process.
-            "capacity": config('CHANNEL_LAYER_CAPACITY', default=10000, cast=int),
+            # than growing without limit — Redis peaked at 17 MB across the
+            # 50,000 runs, against 10 MB at 10,000.
+            #
+            # This is a safety valve, not the fix. The pressure comes from
+            # fanning one message out as one publish per recipient; a
+            # channel-level group would make it one publish and drop the queue
+            # depth by two orders of magnitude.
+            "capacity": config('CHANNEL_LAYER_CAPACITY', default=50000, cast=int),
         },
     },
 }

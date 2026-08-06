@@ -48,6 +48,36 @@ class TestOnlineStatusService:
         yield
         cache.clear()
 
+    def test_presence_snapshot_matches_per_user_lookups(self):
+        """Batched snapshot must return exactly what the per-user reads return.
+
+        The version lookup used to run once per user inside the comprehension;
+        it is now fetched with one batched call, so pin the equivalence for a
+        mix of online, offline and never-seen users.
+        """
+        online = User.objects.create_user(
+            username='snap_online', email='snap_online@example.com', password='testpass123'
+        )
+        offline = User.objects.create_user(
+            username='snap_offline', email='snap_offline@example.com', password='testpass123'
+        )
+        unknown_id = 99_123_456  # never connected, so no cache entries at all
+
+        OnlineStatusService.connection_opened(online.id, 'conn-snap')
+        OnlineStatusService.next_presence_version(offline.id)
+
+        user_ids = [online.id, offline.id, unknown_id]
+        snapshot = OnlineStatusService.presence_snapshot(user_ids)
+
+        assert [entry['user_id'] for entry in snapshot] == user_ids
+        for entry in snapshot:
+            assert entry['is_online'] is OnlineStatusService.is_online(entry['user_id'])
+            assert entry['version'] == OnlineStatusService.get_presence_version(entry['user_id'])
+
+        assert snapshot[0]['is_online'] is True
+        assert snapshot[1]['is_online'] is False
+        assert snapshot[2] == {'user_id': unknown_id, 'is_online': False, 'version': 0}
+
     def test_multiple_connections_keep_user_online_until_last_disconnect(self):
         count, should_broadcast, version = OnlineStatusService.connection_opened(self.user.id, 'conn-1')
         assert count == 1
