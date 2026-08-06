@@ -13,7 +13,6 @@ import {
   buildCellOperations,
   chunkOperations,
   exportMatrixToCSV,
-  exportMatrixToXLSX,
   CellOperation,
   XLSXParseResult,
 } from '@/components/spreadsheets/spreadsheetImportExport';
@@ -4314,16 +4313,16 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
   }, [buildUsedRangeMatrix, getExportFileBaseName]);
 
   const handleExportXLSX = useCallback(async () => {
-    const matrix = buildUsedRangeMatrix();
-    const sheetTitle = sheetName?.trim() || 'Sheet1';
-    const blob = await exportMatrixToXLSX(matrix, sheetTitle);
+    // Delegate to the backend so the .xlsx carries native charts for sparkline
+    // cells (the frontend SheetJS path is value-only). See MED-295.
+    const blob = await SpreadsheetAPI.exportSheetXlsx(spreadsheetId, sheetId);
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = `${getExportFileBaseName()}.xlsx`;
     link.click();
     URL.revokeObjectURL(url);
-  }, [buildUsedRangeMatrix, getExportFileBaseName, sheetName]);
+  }, [spreadsheetId, sheetId, getExportFileBaseName]);
 
   const handleImportClick = useCallback(() => {
     if (isImporting) return;
