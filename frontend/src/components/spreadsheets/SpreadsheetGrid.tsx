@@ -17,6 +17,12 @@ import {
   CellOperation,
   XLSXParseResult,
 } from '@/components/spreadsheets/spreadsheetImportExport';
+import SparklineCell from '@/components/spreadsheets/SparklineCell';
+import {
+  isSparklineRawInput,
+  parseSparklinePayload,
+  type SparklinePayload,
+} from '@/components/spreadsheets/sparklineCell';
 import { adjustFormulaReferences, colLabelToIndex } from '@/lib/spreadsheet/formulaFill';
 import { ApplyHighlightParams } from '@/types/patterns';
 import BrandSelect from '@/components/ui/BrandSelect';
@@ -2758,6 +2764,9 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       const cellData = cells.get(key);
       if (!cellData) return '';
       const rawInput = cellData.rawInput || '';
+      // Sparkline cells render as a chart, not text — keep their JSON payload
+      // out of the displayed/copied value.
+      if (isSparklineRawInput(rawInput)) return '';
       const numberFormat = getCellFormat(row, col).numberFormat;
       const formatNum = (v: number | string) =>
         formatNumericForDisplay(Number(v), numberFormat);
@@ -2793,6 +2802,15 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       return '';
     },
     [cells, evaluateFormulaLocally, formatNumericForDisplay, getCellFormat]
+  );
+
+  const getCellSparkline = useCallback(
+    (row: number, col: number): SparklinePayload | null => {
+      const cellData = cells.get(getCellKey(row, col));
+      if (!cellData || !isSparklineRawInput(cellData.rawInput)) return null;
+      return parseSparklinePayload(cellData.computedString);
+    },
+    [cells],
   );
 
   const getFormulaBarDisplayValue = useCallback((): string => {
@@ -6532,6 +6550,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                       isActive && isSingleCellSelection && !isEditing && !isFilling
                     );
                     const displayValue = isEditing ? editValue : getCellDisplayValue(row, col);
+                    const sparkline = isEditing ? null : getCellSparkline(row, col);
                     const highlightColor = getHighlightColor(row, col);
                     const hasHighlight = Boolean(highlightColor);
                     const remotePresence = resolveRemoteCellPresence(remotePresenceUsers, row, col);
@@ -6626,7 +6645,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                               fontSize: getCellFormat(row, col).fontSize != null ? `${getCellFormat(row, col).fontSize}px` : undefined,
                             }}
                           >
-                            {displayValue}
+                            {sparkline ? (
+                              <SparklineCell payload={sparkline} width={colWidth} height={rowHeight} />
+                            ) : (
+                              displayValue
+                            )}
                           </div>
                         )}
                         {remotePresence.cursors.map((user) => (
@@ -6756,6 +6779,7 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                       isActive && isSingleCellSelection && !isEditing && !isFilling
                     );
                     const displayValue = isEditing ? editValue : getCellDisplayValue(row, col);
+                    const sparkline = isEditing ? null : getCellSparkline(row, col);
                     const highlightColor = getHighlightColor(row, col);
                     const hasHighlight = Boolean(highlightColor);
                     const remotePresence = resolveRemoteCellPresence(remotePresenceUsers, row, col);
@@ -6850,7 +6874,11 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
                               fontSize: getCellFormat(row, col).fontSize != null ? `${getCellFormat(row, col).fontSize}px` : undefined,
                             }}
                           >
-                            {displayValue}
+                            {sparkline ? (
+                              <SparklineCell payload={sparkline} width={colWidth} height={rowHeight} />
+                            ) : (
+                              displayValue
+                            )}
                           </div>
                         )}
                         {remotePresence.cursors.map((user) => (
