@@ -21,7 +21,7 @@ import {
   isSparklineRawInput,
   parseSparklinePayload,
   type SparklinePayload,
-} from '@/components/spreadsheets/sparklineCell';
+} from '@/components/spreadsheets/sparklineData';
 import { adjustFormulaReferences, colLabelToIndex } from '@/lib/spreadsheet/formulaFill';
 import { ApplyHighlightParams } from '@/types/patterns';
 import BrandSelect from '@/components/ui/BrandSelect';

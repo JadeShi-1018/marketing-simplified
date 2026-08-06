@@ -1,7 +1,7 @@
 import {
   isSparklineRawInput,
   parseSparklinePayload,
-} from '@/components/spreadsheets/sparklineCell';
+} from '@/components/spreadsheets/sparklineData';
 
 describe('isSparklineRawInput', () => {
   it.each([

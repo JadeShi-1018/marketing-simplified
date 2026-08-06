@@ -1,7 +1,7 @@
 'use client';
 
 import { LineChart, Line } from 'recharts';
-import type { SparklinePayload } from './sparklineCell';
+import type { SparklinePayload } from './sparklineData';
 
 interface SparklineCellProps {
   payload: SparklinePayload;
