@@ -147,6 +147,70 @@ def test_notify_new_message_batches_presence_and_delivery_status(message_with_re
     assert offline_status.delivered_at is None
 
 
+def test_notify_new_message_does_not_publish_twice_to_the_same_recipient(
+    message_with_recipients,
+):
+    """A second run must not re-deliver a recipient the first run already took.
+
+    The realtime fan-out claims recipients by winning the sent -> delivered
+    transition. Anything that looks at the message afterwards — a Celery retry,
+    the offline delivery task, reconnect recovery — must find nothing left to
+    claim for that recipient.
+    """
+    message, online_user, offline_user = message_with_recipients
+
+    with (
+        patch(
+            'chat.tasks.OnlineStatusService.get_online_users',
+            return_value=[online_user.id],
+        ),
+        patch(
+            'chat.tasks.broadcast_event_to_user_groups_sync',
+            return_value=([online_user.id], {}),
+        ) as broadcast,
+        patch('chat.tasks.deliver_message_task.apply_async'),
+    ):
+        notify_new_message(message.id)
+        assert broadcast.call_args.args[1] == [online_user.id]
+
+        broadcast.reset_mock()
+        notify_new_message(message.id)
+
+    # Second run finds the row already delivered, so it claims nobody.
+    assert broadcast.call_args.args[1] == []
+    assert MessageStatus.objects.get(message=message, user=online_user).status == 'delivered'
+
+
+def test_notify_new_message_returns_the_row_when_publishing_fails(
+    message_with_recipients,
+):
+    """A claimed recipient whose publish failed goes back to 'sent'.
+
+    Claiming before publishing trades a duplicate for a possible loss, so a
+    failed publish has to release the row — otherwise it reads as delivered and
+    the delivery task will never retry it.
+    """
+    message, online_user, offline_user = message_with_recipients
+
+    with (
+        patch(
+            'chat.tasks.OnlineStatusService.get_online_users',
+            return_value=[online_user.id],
+        ),
+        patch(
+            'chat.tasks.broadcast_event_to_user_groups_sync',
+            return_value=([], {online_user.id: RuntimeError('channel layer down')}),
+        ),
+        patch('chat.tasks.deliver_message_task.apply_async') as schedule_delivery,
+    ):
+        notify_new_message(message.id)
+
+    status = MessageStatus.objects.get(message=message, user=online_user)
+    assert status.status == 'sent'
+    assert status.delivered_at is None
+    schedule_delivery.assert_called_once_with(args=[message.id], countdown=5)
+
+
 def test_deliver_message_task_does_not_retry_users_who_remain_offline(
     message_with_recipients,
 ):
