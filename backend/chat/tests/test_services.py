@@ -70,6 +70,85 @@ def test_releasing_an_unpublished_claim_makes_it_claimable_again():
     assert claim_recipients_for_delivery(message.id, [recipient.id]) == [recipient.id]
 
 
+def test_joinable_chats_come_from_active_membership_only():
+    """Chat-group entitlement must follow the database, not anything else.
+
+    Joining `chat_<id>` is what lets a connection receive that chat, so this is
+    the authorisation decision: a chat the user was removed from, or never
+    joined, must not appear.
+    """
+    from chat.services import get_joinable_chat_ids
+
+    organization = Organization.objects.create(name='Groups Org')
+    project = Project.objects.create(name='Groups Project', organization=organization)
+    member = User.objects.create_user(
+        email='groups_member@example.com', username='groups_member', password='pass12345'
+    )
+    outsider = User.objects.create_user(
+        email='groups_outsider@example.com', username='groups_outsider', password='pass12345'
+    )
+
+    joined = Chat.objects.create(project=project, type=ChatType.GROUP)
+    removed_from = Chat.objects.create(project=project, type=ChatType.GROUP)
+    never_joined = Chat.objects.create(project=project, type=ChatType.GROUP)
+
+    ChatParticipant.objects.create(chat=joined, user=member, is_active=True)
+    ChatParticipant.objects.create(chat=removed_from, user=member, is_active=False)
+    ChatParticipant.objects.create(chat=never_joined, user=outsider, is_active=True)
+
+    entitled = get_joinable_chat_ids(member.id)
+
+    assert joined.id in entitled
+    assert removed_from.id not in entitled, 'an inactive participant must lose the chat'
+    assert never_joined.id not in entitled, 'a chat the user never joined must not appear'
+    assert get_joinable_chat_ids(outsider.id) == [never_joined.id]
+
+
+def test_membership_change_notifies_affected_users(settings):
+    """Every membership mutator must trigger a re-sync of live connections.
+
+    A connection holding a group it is no longer entitled to keeps receiving
+    that chat until it closes, which can be hours, so the revocation signal is
+    the part that has to be reliable.
+    """
+    settings.CHAT_CHANNEL_GROUPS_ENABLED = True
+
+    organization = Organization.objects.create(name='Revoke Org')
+    project = Project.objects.create(name='Revoke Project', organization=organization)
+    chat = Chat.objects.create(project=project, type=ChatType.GROUP)
+    staying = User.objects.create_user(
+        email='revoke_stay@example.com', username='revoke_stay', password='pass12345'
+    )
+    leaving = User.objects.create_user(
+        email='revoke_leave@example.com', username='revoke_leave', password='pass12345'
+    )
+    ChatParticipant.objects.create(chat=chat, user=staying, is_active=True)
+
+    with patch('chat.services.broadcast_event_to_user_groups_sync') as broadcast:
+        from chat.services import notify_chat_membership_changed
+
+        notify_chat_membership_changed(chat.id, [staying.id, leaving.id])
+
+    broadcast.assert_called_once()
+    notified_user_ids = broadcast.call_args.args[1]
+    event = broadcast.call_args.args[2]
+    # The user who lost access must be told too, or their socket keeps the group.
+    assert set(notified_user_ids) == {staying.id, leaving.id}
+    assert event == {'type': 'chat_membership_changed', 'chat_id': chat.id}
+
+
+def test_membership_change_is_silent_while_chat_groups_are_disabled(settings):
+    """The revocation broadcast is dead weight until the feature is on."""
+    settings.CHAT_CHANNEL_GROUPS_ENABLED = False
+
+    with patch('chat.services.broadcast_event_to_user_groups_sync') as broadcast:
+        from chat.services import notify_chat_membership_changed
+
+        notify_chat_membership_changed(1, [1, 2, 3])
+
+    broadcast.assert_not_called()
+
+
 def test_claim_ignores_recipients_already_delivered():
     """Releasing is scoped to what this caller claimed, not everything delivered."""
     message, recipient = _message_with_pending_recipient()

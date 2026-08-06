@@ -15,6 +15,7 @@ from .realtime import broadcast_event_to_user_groups_sync
 from .services import (
     ChatService,
     OnlineStatusService,
+    chat_group_name,
     claim_recipients_for_delivery,
     release_unpublished_recipients,
 )
@@ -96,6 +97,23 @@ def build_realtime_message_payload(message: Message) -> Dict[str, Any]:
         'forwarded_from': forwarded_from,
         'reply_to': reply_to,
     }
+
+
+def _publish_to_chat_group(channel_layer, chat_id, claimed_user_ids, event):
+    """Publish one event to a chat's group, on behalf of the claimed recipients.
+
+    Returns the same (delivered, failures) shape as the per-recipient
+    broadcaster so callers do not branch on which one ran. A single publish has
+    a single outcome, so either every claimed recipient counts as delivered or
+    none of them do.
+    """
+    if not claimed_user_ids:
+        return [], {}
+    try:
+        async_to_sync(channel_layer.group_send)(chat_group_name(chat_id), event)
+    except Exception as exc:
+        return [], {user_id: exc for user_id in claimed_user_ids}
+    return list(claimed_user_ids), {}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -419,14 +437,25 @@ def notify_new_message(self, message_id: int):
         online_user_ids = OnlineStatusService.get_online_users(participant_ids)
 
         claimed_user_ids = claim_recipients_for_delivery(message_id, online_user_ids)
-        delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
-            channel_layer,
-            claimed_user_ids,
-            {
-                'type': 'chat_message',
-                'message': message_payload,
-            },
-        )
+        event = {
+            'type': 'chat_message',
+            'message': message_payload,
+        }
+
+        if getattr(settings, 'CHAT_CHANNEL_GROUPS_ENABLED', False):
+            # One publish for the whole chat instead of one per recipient.
+            # The group carries every connection entitled to this chat, so
+            # there is no per-recipient result to inspect: the publish either
+            # happened for all of them or for none.
+            delivered_user_ids, publish_failures = _publish_to_chat_group(
+                channel_layer, message.chat_id, claimed_user_ids, event
+            )
+        else:
+            delivered_user_ids, publish_failures = broadcast_event_to_user_groups_sync(
+                channel_layer,
+                claimed_user_ids,
+                event,
+            )
         # The delivery task scheduled below picks these up as ordinary pending
         # recipients.
         release_unpublished_recipients(message_id, publish_failures)

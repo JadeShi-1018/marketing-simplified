@@ -2,6 +2,8 @@ import logging
 import os
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
+from channels.layers import get_channel_layer
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files import File
 from django.db import IntegrityError, transaction
@@ -11,6 +13,7 @@ from django.utils import timezone
 from django_redis import get_redis_connection
 from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ChannelVisibility, ThreadReadStatus
 from core.models import ProjectMember
+from .realtime import broadcast_event_to_user_groups_sync
 
 User = get_user_model()
 
@@ -151,6 +154,55 @@ def claim_recipients_for_delivery(message_id: int, user_ids: List[int]) -> List[
                 updated_at=delivered_at,
             )
     return claimed
+
+
+def chat_group_name(chat_id: int) -> str:
+    """Channel-layer group carrying events for one chat."""
+    return f'chat_{int(chat_id)}'
+
+
+def get_joinable_chat_ids(user_id: int) -> List[int]:
+    """Chats this user is entitled to receive events for, straight from the database.
+
+    Deliberately not cached and never derived from anything the client sends:
+    this is the authorisation decision behind chat-group membership, so a stale
+    or forged answer means someone receives a channel they are not in.
+    """
+    return list(
+        ChatParticipant.objects
+        .filter(user_id=user_id, is_active=True)
+        .values_list('chat_id', flat=True)
+    )
+
+
+def notify_chat_membership_changed(chat_id: int, user_ids: Iterable[int]) -> None:
+    """Tell affected users' live connections to re-sync their chat groups.
+
+    Sent to each user's personal group, which they are always entitled to, so
+    the consumer can re-read its entitlements from the database rather than
+    trusting anything in the event. Best effort: a connection that misses this
+    still re-syncs on its next connect, and the message path is unaffected when
+    chat groups are disabled.
+    """
+    user_ids = [int(user_id) for user_id in user_ids]
+    if not user_ids or not getattr(settings, 'CHAT_CHANNEL_GROUPS_ENABLED', False):
+        return
+    try:
+        channel_layer = get_channel_layer()
+        if channel_layer is None:
+            return
+        broadcast_event_to_user_groups_sync(
+            channel_layer,
+            user_ids,
+            {'type': 'chat_membership_changed', 'chat_id': int(chat_id)},
+        )
+    except Exception:
+        # Never let a revocation broadcast undo a committed membership change.
+        # The connection re-syncs on reconnect; surface it so a persistent
+        # failure is visible rather than silently leaving stale memberships.
+        logger.exception(
+            'Failed to broadcast chat membership change for chat %s', chat_id
+        )
 
 
 def release_unpublished_recipients(message_id: int, user_ids: Iterable[int]) -> int:
@@ -576,6 +628,18 @@ class ChatService:
         affected_ids.update(extra_user_ids)
         if not affected_ids:
             return
+        # Membership just changed, so any live connection's chat-group
+        # membership is now stale. This runs for every membership mutator in
+        # the codebase, which makes it the one place revocation has to be
+        # correct: a connection that keeps a group it is no longer entitled to
+        # goes on receiving that channel's messages for as long as it stays
+        # open, which can be hours. Told before the cache invalidation below so
+        # a removal is acted on even if that part is skipped for size.
+        chat_id = chat.id
+        transaction.on_commit(
+            lambda: notify_chat_membership_changed(chat_id, affected_ids)
+        )
+
         limit = OnlineStatusService.PRESENCE_RECIPIENTS_INVALIDATION_LIMIT
         if len(affected_ids) > limit:
             logger.info(

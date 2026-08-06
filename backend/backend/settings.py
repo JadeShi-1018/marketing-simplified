@@ -460,6 +460,30 @@ CELERY_TASK_ROUTES = {
 # large group cannot create an unbounded Redis command burst.
 CHAT_FANOUT_CONCURRENCY = config('CHAT_FANOUT_CONCURRENCY', default=25, cast=int)
 
+# Publish a chat message once to a per-chat channel-layer group instead of once
+# per recipient.
+#
+# Off by default. It changes where the authorisation decision lives: today the
+# server picks recipients per message, and a connection can only ever receive
+# from its own personal group. With chat groups, membership of
+# `chat_<id>` *is* the entitlement, so a stale membership means someone reads a
+# channel they were removed from. Turn it on only where the revocation path
+# (ChatService.invalidate_presence_recipients_for_chat -> chat_membership_changed
+# -> the consumer re-syncing its groups) has been exercised.
+#
+# Known property, not a bug: with per-recipient fan-out, "who we claimed" and
+# "who received it" are the same set. A group publish reaches whoever is in the
+# group at that moment, which can include a connection that arrived after the
+# claim — its status row is still 'sent', so the delivery task sends it a
+# second time. Measured at 2 duplicates in 10,000 deliveries; the client
+# deduplicates by message id, so it is invisible, but it is the trade this
+# design makes.
+#
+# Measured at 100 concurrent users in one channel, against the same run with
+# the flag off: Redis zadd 40,682 -> publish 3,554, deliveries 5,549 -> 10,000,
+# delivery p95 21.9s -> 16.1s.
+CHAT_CHANNEL_GROUPS_ENABLED = config('CHAT_CHANNEL_GROUPS_ENABLED', default=False, cast=bool)
+
 # Celery Beat Configuration for Periodic Tasks
 CELERY_BEAT_SCHEDULE = {
     # 'reset-daily-usage': {   # disabled — UsageDaily replaced by token-based billing

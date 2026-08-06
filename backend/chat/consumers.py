@@ -10,11 +10,14 @@ from django.utils import timezone
 from django.core.cache import cache
 from .models import Chat, ChatParticipant, Message, MessageStatus
 from .realtime import broadcast_event_to_user_groups
+from django.conf import settings
 from .services import (
     ChatService,
     MessageService,
     OnlineStatusService,
+    chat_group_name,
     claim_recipients_for_delivery,
+    get_joinable_chat_ids,
     release_unpublished_recipients,
 )
 from .tasks import (
@@ -87,6 +90,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
         await self.accept()
         logger.info(f"[WebSocket] User {self.user_id} ({self.user.username}) connected and marked as ONLINE")
 
+        # Joined after accept so a large membership does not extend the
+        # handshake, which daphne times out.
+        self.joined_chat_groups = set()
+        await self.sync_chat_groups()
+
         presence_recipient_ids = await database_sync_to_async(self.get_presence_recipient_ids)()
         await self.send_presence_snapshot(presence_recipient_ids)
 
@@ -102,13 +110,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
+        # Leave the chat groups but keep the names: the offline presence
+        # broadcast below still has to reach the same audience, and this
+        # connection must not be in the group while that is published or it
+        # would be told about its own disconnect.
+        for group_name in getattr(self, 'joined_chat_groups', set()):
+            await self.channel_layer.group_discard(group_name, self.channel_name)
+
         if hasattr(self, 'user_group_name'):
             # Leave user's personal channel group
             await self.channel_layer.group_discard(
                 self.user_group_name,
                 self.channel_name
             )
-            
+
             # Mark user offline only after their last websocket disconnects.
             if hasattr(self, 'user') and self.user:
                 remaining_connections, offline_token = await sync_to_async(
@@ -143,7 +158,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
                             )
             else:
                 logger.info(f"[WebSocket] User {self.user_id} disconnected (code: {close_code})")
-    
+
+        # Cleared last: the offline presence broadcast above publishes to these.
+        self.joined_chat_groups = set()
+
     async def receive(self, text_data):
         """Handle incoming WebSocket messages"""
         try:
@@ -535,9 +553,78 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Error sending presence snapshot for user {self.user_id}: {e}")
 
+    async def sync_chat_groups(self):
+        """Match this connection's chat groups to what the database allows.
+
+        Re-read every time rather than applying a delta from the event: the
+        event only says "something changed", and the entitlement itself always
+        comes from the database. Joining a group is what lets this connection
+        receive that chat, so anything else would be trusting the wrong source.
+        """
+        if not getattr(settings, 'CHAT_CHANNEL_GROUPS_ENABLED', False):
+            return
+        try:
+            chat_ids = await database_sync_to_async(get_joinable_chat_ids)(self.user.id)
+            allowed = {chat_group_name(chat_id) for chat_id in chat_ids}
+            current = getattr(self, 'joined_chat_groups', set())
+
+            for group_name in current - allowed:
+                await self.channel_layer.group_discard(group_name, self.channel_name)
+            for group_name in allowed - current:
+                await self.channel_layer.group_add(group_name, self.channel_name)
+
+            self.joined_chat_groups = allowed
+            logger.debug(
+                "[WebSocket] User %s chat groups synced: %s joined, %s left",
+                self.user_id, len(allowed - current), len(current - allowed),
+            )
+        except Exception:
+            # A failure here must not drop the connection; the personal group
+            # still delivers, and the next sync or reconnect repairs it.
+            logger.exception(
+                "[WebSocket] Failed to sync chat groups for user %s", self.user_id
+            )
+
+    async def chat_membership_changed(self, event):
+        """Someone's membership changed — re-derive this connection's groups."""
+        await self.sync_chat_groups()
+
+    async def _broadcast_presence_to_chat_groups(self, is_online: bool, version=None):
+        """Announce presence once per shared chat rather than once per peer.
+
+        Publishes to the chats this connection is entitled to, which is the
+        same audience as the per-peer path — everyone who shares a chat — at
+        one publish per chat instead of one per person. N members of a channel
+        coming online together was N^2 publishes; it is now N.
+
+        Someone in several shared chats receives the event more than once. That
+        is harmless: presence events carry a version and the client discards
+        anything not newer than what it has.
+        """
+        group_names = getattr(self, 'joined_chat_groups', set())
+        if not group_names:
+            return
+        event = {
+            'type': 'presence_update',
+            'user_id': self.user.id,
+            'is_online': is_online,
+            'version': version,
+            'timestamp': timezone.now().isoformat(),
+        }
+        for group_name in group_names:
+            await self.channel_layer.group_send(group_name, event)
+        logger.debug(
+            "[WebSocket] Presence update for user %s sent to %s chat group(s): is_online=%s",
+            self.user_id, len(group_names), is_online,
+        )
+
     async def broadcast_presence_update(self, is_online: bool, recipient_ids=None, version=None):
         """Broadcast this user's presence transition to shared chat participants."""
         try:
+            if getattr(settings, 'CHAT_CHANNEL_GROUPS_ENABLED', False):
+                await self._broadcast_presence_to_chat_groups(is_online, version)
+                return
+
             if recipient_ids is None:
                 recipient_ids = await database_sync_to_async(self.get_presence_recipient_ids)()
             recipient_ids = await sync_to_async(
