@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -30,8 +31,28 @@ class Command(BaseCommand):
             default='/load-test-output/users.json',
             help='Credential JSON path shared with the K6 container.',
         )
+        parser.add_argument(
+            '--allow-outside-debug',
+            action='store_true',
+            help=(
+                'Required to run when DEBUG is off. This command mints real '
+                'verified accounts and valid JWTs, so it must never run against '
+                'production by accident.'
+            ),
+        )
 
     def handle(self, *args, **options):
+        # This command creates verified user accounts, signs valid access tokens
+        # for them and writes those tokens to disk in plain text. That is fine on
+        # a disposable local stack and unacceptable anywhere real, so refuse to
+        # run outside DEBUG unless the operator opts in explicitly.
+        if not settings.DEBUG and not options['allow_outside_debug']:
+            raise CommandError(
+                'Refusing to run with DEBUG=False: this command creates real '
+                'verified accounts and writes valid access tokens to disk. '
+                'Pass --allow-outside-debug only on a disposable environment.'
+            )
+
         user_count = options['users']
         if user_count < 2 or user_count > 500:
             raise CommandError('--users must be between 2 and 500')
