@@ -351,6 +351,69 @@ class TestChatConsumer:
             return ChatParticipant.objects.create(chat=chat, user=user, is_active=True)
         return await create()
 
+    async def test_chat_group_access_is_revoked_on_removal(self, db, settings):
+        """A socket that loses channel access must stop receiving it immediately.
+
+        This is the security property behind chat-level groups: membership of
+        the group *is* the entitlement, and a WebSocket can stay open for
+        hours, so a removal that only takes effect on reconnect means the
+        removed user keeps reading the channel until then.
+        """
+        from asgiref.sync import sync_to_async
+        from channels.db import database_sync_to_async
+        from channels.layers import get_channel_layer
+        from chat.services import ChatService, chat_group_name
+
+        settings.CHAT_CHANNEL_GROUPS_ENABLED = True
+
+        user = await self._create_user('revokeduser', 'revoked@example.com')
+        org = await self._create_organization('Revoke Org')
+        project = await self._create_project(org, 'Revoke Project')
+        chat = await self._create_chat(project, ChatType.GROUP)
+        participant = await self._add_chat_participant(chat, user)
+
+        token = str(AccessToken.for_user(user))
+        application = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator = WebsocketCommunicator(application, f'/ws/chat/{user.id}/?token={token}')
+        try:
+            connected, _ = await communicator.connect()
+            assert connected
+            await communicator.receive_json_from(timeout=5)  # presence_snapshot
+
+            channel_layer = get_channel_layer()
+            group = chat_group_name(chat.id)
+
+            # While a member: the chat group reaches this socket.
+            await channel_layer.group_send(
+                group, {'type': 'chat_message', 'message': {'id': 1, 'content': 'before'}}
+            )
+            received = await communicator.receive_json_from(timeout=5)
+            assert received['message']['content'] == 'before'
+
+            # Remove them. Every membership mutator funnels through this hook,
+            # which is what tells the live socket to re-derive its groups.
+            @database_sync_to_async
+            def remove():
+                participant.is_active = False
+                participant.save(update_fields=['is_active'])
+                ChatService.invalidate_presence_recipients_for_chat(
+                    chat, extra_user_ids=[user.id]
+                )
+
+            await remove()
+            # Let the membership event reach the consumer and be acted on.
+            await asyncio.sleep(0.5)
+
+            # After removal the same publish must not reach this socket.
+            await channel_layer.group_send(
+                group, {'type': 'chat_message', 'message': {'id': 2, 'content': 'after'}}
+            )
+            assert await communicator.receive_nothing(timeout=2), (
+                'a removed member still received the channel'
+            )
+        finally:
+            await _disconnect_communicators(communicator)
+
     async def test_outbox_digest_returns_committed_client_message_ids(self, db):
         """Reconnect outbox_digest should ack server-committed client message ids."""
         from asgiref.sync import sync_to_async
@@ -524,4 +587,3 @@ class TestChatConsumerSync:
         assert payload['attachments'] == []
         assert not payload['is_forwarded']
         assert payload['forwarded_from'] is None
-

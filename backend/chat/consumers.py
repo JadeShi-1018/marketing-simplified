@@ -483,6 +483,12 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
     async def presence_update(self, event):
         """Send user online/offline status changes to WebSocket"""
+        # A chat-group publish reaches every member including the one whose
+        # presence changed, where the per-recipient path excluded them by
+        # construction. Nobody needs to be told they came online, so keep the
+        # stream the same either way.
+        if getattr(self, 'user', None) and event.get('user_id') == self.user.id:
+            return
         await self.send(text_data=json.dumps({
             'type': 'presence_update',
             'user_id': event['user_id'],
