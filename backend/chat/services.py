@@ -30,6 +30,10 @@ class _OutboxAckSerializerRequest:
 
     def build_absolute_uri(self, url):
         return url
+
+
+from .metrics import chat_broadcast_enqueue_failures_total  # noqa: E402
+
 logger = logging.getLogger(__name__)
 
 ALLOWED_ATTACHMENT_IMAGE_MIME_PREFIX = "image/"
@@ -984,8 +988,22 @@ class MessageService:
 
         def schedule_delivery() -> None:
             from .tasks import notify_message_recipients, notify_new_message
-            notify_message_recipients.delay(message_id)
-            notify_new_message.delay(message_id)
+            try:
+                notify_message_recipients.delay(message_id)
+                notify_new_message.delay(message_id)
+            except Exception:
+                # The message is already committed at this point, so letting a
+                # broker failure escape would fail the request for a message
+                # that was in fact saved — and the client would retry a send
+                # that already succeeded. Recipients still get it: the
+                # MessageStatus rows exist, so reconnect recovery and history
+                # both deliver it. Counted because a user-visible "message did
+                # not appear" is otherwise invisible on the server side.
+                # Matches the pin path in views.py.
+                chat_broadcast_enqueue_failures_total.labels(event='message').inc()
+                logger.exception(
+                    'Failed to queue realtime delivery for message %s', message_id
+                )
 
         transaction.on_commit(schedule_delivery)
 

@@ -53,6 +53,7 @@ from .services import (
     UnsupportedAttachmentMimeType,
     validate_attachment_mime_type,
 )
+from .metrics import chat_broadcast_enqueue_failures_total
 from .tasks import notify_message_recipients, notify_new_message, notify_pin_update, send_scheduled_message
 from core.models import ProjectMember
 from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin
@@ -208,7 +209,11 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                 notify_pin_update.delay(chat_id, action, message_id, pin_data)
             except Exception:
                 # A broker failure must never roll back a pin that has already
-                # been persisted successfully.
+                # been persisted successfully. The pin is durable either way;
+                # what is lost is the live update, so members only see it after
+                # a refresh. Counted as well as logged: this is silent from the
+                # user's side and nobody reads logs looking for it.
+                chat_broadcast_enqueue_failures_total.labels(event='pin').inc()
                 logger.exception('Failed to queue pin update for chat %s', chat_id)
 
         transaction.on_commit(enqueue)
