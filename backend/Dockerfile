@@ -27,4 +27,7 @@ RUN chown -R appuser:appuser /app
 RUN chmod +x /app/entrypoint
 USER appuser
 
-CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "backend.asgi:application"]
+# --websocket_connect_timeout: daphne defaults to 5s and maps it to the
+# handshake timeout, so a queued burst is refused outright. See CONN_MAX_AGE
+# in settings.py for the change that makes the handshake fast.
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "--websocket_connect_timeout", "30", "backend.asgi:application"]

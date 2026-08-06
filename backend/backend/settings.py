@@ -185,6 +185,23 @@ DATABASES = {
         'PASSWORD': config('POSTGRES_PASSWORD', default='cocofly4321'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('POSTGRES_PORT', default='5432'),
+        # DO NOT set CONN_MAX_AGE here without a connection pooler in front of
+        # PostgreSQL. It was measured and reverted:
+        #
+        # Connection reuse is genuinely attractive on the WebSocket path —
+        # opening a connection to this database costs ~51 ms against ~1 ms for a
+        # query on an open one, and with CONN_MAX_AGE=60 a 100-connection burst
+        # went from 20% refused to 3%, handshake p95 4.8 s to 1.1 s.
+        #
+        # But Django's ASGI handler runs each HTTP request on its own thread,
+        # and a persistent connection is thread-local: it is not closed when the
+        # request ends (it is not yet obsolete) and it is not closed when the
+        # thread is destroyed. Under 100 concurrent requests that leaks roughly
+        # one connection per request — measured 99 of max_connections=100, 90 of
+        # them idle, and 94% of message sends then timed out.
+        #
+        # The safe version of this optimisation is PgBouncer (or raising
+        # max_connections to fit the real thread count), not this setting.
         # REMOVED: 'OPTIONS': {'options': '-c search_path=public'}
         # TenantSchemaMiddleware dynamically sets search_path per request
         'TEST': {
