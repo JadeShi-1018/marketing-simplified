@@ -9,7 +9,9 @@ from django.core.management.base import BaseCommand, CommandError
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from chat.models import Chat, ChatParticipant, ChatType
-from core.models import Project, ProjectMember
+from core.models import Organization, Project, ProjectMember
+from core.services.tenant import slug_to_schema_name
+from core.tenant_context import tenant_schema_context
 from stripe_meta.permissions import generate_organization_access_token
 
 
@@ -22,6 +24,11 @@ class Command(BaseCommand):
     help = 'Create deterministic local chat load-test users and write K6 credentials.'
 
     def add_arguments(self, parser):
+        parser.add_argument(
+            '--organization-slug',
+            required=True,
+            help='Organization whose tenant schema contains the project.',
+        )
         parser.add_argument('--project-id', type=int, required=True)
         parser.add_argument('--users', type=int, default=100)
         parser.add_argument('--chat-id', type=int)
@@ -42,6 +49,26 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        if not settings.DEBUG and not options['allow_outside_debug']:
+            raise CommandError(
+                'Refusing to run with DEBUG=False: this command creates real '
+                'verified accounts and writes valid access tokens to disk. '
+                'Pass --allow-outside-debug only on a disposable environment.'
+            )
+
+        try:
+            organization = Organization.objects.get(
+                slug=options['organization_slug'],
+                is_active=True,
+            )
+        except Organization.DoesNotExist as exc:
+            raise CommandError('Active organization not found') from exc
+
+        tenant_schema = slug_to_schema_name(organization.slug)
+        with tenant_schema_context(tenant_schema):
+            return self._handle_tenant(*args, **options)
+
+    def _handle_tenant(self, *args, **options):
         # This command creates verified user accounts, signs valid access tokens
         # for them and writes those tokens to disk in plain text. That is fine on
         # a disposable local stack and unacceptable anywhere real, so refuse to
@@ -66,6 +93,8 @@ class Command(BaseCommand):
 
         if not project.organization_id:
             raise CommandError('The selected project must belong to an organization')
+        if project.organization.slug != options['organization_slug']:
+            raise CommandError('The selected project belongs to a different organization')
 
         chat_id = options.get('chat_id')
         if chat_id:

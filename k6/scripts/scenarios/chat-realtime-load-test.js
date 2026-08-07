@@ -4,7 +4,7 @@
  *
  * Prepare local data first:
  *   docker exec backend-dev python manage.py prepare_chat_load_test \
- *     --project-id <id> --users 100
+ *     --organization-slug <slug> --project-id <tenant-project-id> --users 100
  *
  * Run a safe smoke test before increasing VUS:
  *   docker compose -f docker-compose.dev.yml run --rm \
@@ -17,10 +17,12 @@ import { check } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
 import { SharedArray } from 'k6/data';
 
-const config = JSON.parse(open('/data/users.json'));
+const config = JSON.parse(open(__ENV.CREDENTIALS_FILE || '/data/users.json'));
 const users = new SharedArray('chat load users', () => config.users);
 const vus = Number(__ENV.VUS || Math.min(users.length, 10));
 const sessionSeconds = Number(__ENV.SESSION_SECONDS || 20);
+const warmupSeconds = Number(__ENV.WARMUP_SECONDS || 0);
+const httpTimeoutSeconds = Number(__ENV.HTTP_TIMEOUT_SECONDS || 15);
 const baseUrl = (__ENV.K6_BASE_URL || 'http://backend-dev:8000').replace(/\/$/, '');
 const wsBaseUrl = (__ENV.K6_WS_URL || baseUrl.replace(/^http/, 'ws')).replace(/\/$/, '');
 const wsOrigin = (__ENV.K6_WS_ORIGIN || __ENV.K6_FRONTEND_URL || baseUrl).replace(/\/$/, '');
@@ -64,7 +66,13 @@ export function setup() {
   if (!check(health, { 'backend health is 200': (response) => response.status === 200 })) {
     throw new Error(`Backend health check failed: ${health.status}`);
   }
-  return { runId: `chat-load-${Date.now()}` };
+  return {
+    runId: `chat-load-${Date.now()}`,
+    // Give every WebSocket time to finish group membership before opening the
+    // write barrier. Without this, the first ready VUs send while the remaining
+    // VUs are still recovering and the test is not a simultaneous burst.
+    sendAt: Date.now() + warmupSeconds * 1000,
+  };
 }
 
 export default function (data) {
@@ -93,31 +101,33 @@ export default function (data) {
 
         if (event.type === 'presence_snapshot' && !sent) {
           sent = true;
-          const clientMessageId = `${data.runId}-${credential.user_id}-${__VU}`;
-          const headers = {
-            Authorization: `Bearer ${credential.token}`,
-            'Content-Type': 'application/json',
-          };
-          if (credential.organization_token) {
-            headers['X-Organization-Token'] = credential.organization_token;
-          }
-          const sendResponse = http.post(
-            `${baseUrl}/api/chat/messages/`,
-            JSON.stringify({
-              chat: config.chat_id,
-              content: `${runPrefix}sender=${credential.user_id};vu=${__VU}`,
-              client_message_id: clientMessageId,
-            }),
-            {
-              headers: headers,
-              timeout: '15s',
-              tags: { name: 'chat_send_message' },
-            },
-          );
-          sendHttpMs.add(sendResponse.timings.duration);
-          const accepted = sendResponse.status === 200 || sendResponse.status === 201;
-          sendFailed.add(!accepted);
-          check(sendResponse, { 'message send is accepted': () => accepted });
+          socket.setTimeout(() => {
+            const clientMessageId = `${data.runId}-${credential.user_id}-${__VU}`;
+            const headers = {
+              Authorization: `Bearer ${credential.token}`,
+              'Content-Type': 'application/json',
+            };
+            if (credential.organization_token) {
+              headers['X-Organization-Token'] = credential.organization_token;
+            }
+            const sendResponse = http.post(
+              `${baseUrl}/api/chat/messages/`,
+              JSON.stringify({
+                chat: config.chat_id,
+                content: `${runPrefix}sender=${credential.user_id};vu=${__VU}`,
+                client_message_id: clientMessageId,
+              }),
+              {
+                headers: headers,
+                timeout: `${httpTimeoutSeconds}s`,
+                tags: { name: 'chat_send_message' },
+              },
+            );
+            sendHttpMs.add(sendResponse.timings.duration);
+            const accepted = sendResponse.status === 200 || sendResponse.status === 201;
+            sendFailed.add(!accepted);
+            check(sendResponse, { 'message send is accepted': () => accepted });
+          }, Math.max(1, data.sendAt - Date.now()));
           return;
         }
 
@@ -150,6 +160,7 @@ export default function (data) {
   const connected = response && response.status === 101;
   wsConnectFailed.add(!connected);
   check(response, { 'websocket upgraded': () => connected });
-  check(received, { 'received at least one peer message': (count) => count > 0 });
+  check(received, {
+    'received every peer message': (count) => count === vus - 1,
+  });
 }
-
