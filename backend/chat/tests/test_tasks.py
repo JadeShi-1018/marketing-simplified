@@ -12,17 +12,21 @@ from django.utils import timezone
 from core.models import Organization, Project
 from chat.models import (
     Chat,
+    ChatOutboxEvent,
     ChatParticipant,
     ChatType,
     Message,
     MessageAttachment,
     MessageStatus,
+    ScheduledMessage,
 )
 from chat.tasks import (
     ORPHAN_ATTACHMENT_TTL_HOURS,
     cleanup_orphaned_attachments,
     deliver_message_task,
+    dispatch_pending_chat_outbox,
     notify_new_message,
+    send_scheduled_message,
 )
 
 pytestmark = pytest.mark.django_db
@@ -117,7 +121,10 @@ def test_never_touches_linked_attachment(user):
     assert MessageAttachment.objects.filter(pk=linked.pk).exists()
 
 
-def test_notify_new_message_batches_presence_and_delivery_status(message_with_recipients):
+def test_notify_new_message_batches_presence_and_delivery_status(
+    message_with_recipients, settings
+):
+    settings.CHAT_CHANNEL_GROUPS_ENABLED = False
     message, online_user, offline_user = message_with_recipients
 
     with (
@@ -137,7 +144,11 @@ def test_notify_new_message_batches_presence_and_delivery_status(message_with_re
     assert set(recipient_ids) == {online_user.id, offline_user.id}
     broadcast.assert_called_once()
     assert broadcast.call_args.args[1] == [online_user.id]
-    schedule_delivery.assert_called_once_with(args=[message.id], countdown=5)
+    schedule_delivery.assert_called_once_with(
+        args=[message.id],
+        kwargs={'tenant_schema': 'public'},
+        countdown=5,
+    )
 
     online_status = MessageStatus.objects.get(message=message, user=online_user)
     offline_status = MessageStatus.objects.get(message=message, user=offline_user)
@@ -147,8 +158,23 @@ def test_notify_new_message_batches_presence_and_delivery_status(message_with_re
     assert offline_status.delivered_at is None
 
 
+def test_notify_new_message_creates_missing_recipient_statuses(message_with_recipients):
+    message, online_user, offline_user = message_with_recipients
+    MessageStatus.objects.filter(message=message).delete()
+
+    with (
+        patch('chat.tasks.OnlineStatusService.get_online_users', return_value=[]),
+        patch('chat.tasks.deliver_message_task.apply_async'),
+    ):
+        notify_new_message(message.id)
+
+    assert set(
+        MessageStatus.objects.filter(message=message).values_list('user_id', flat=True)
+    ) == {online_user.id, offline_user.id}
+
+
 def test_notify_new_message_does_not_publish_twice_to_the_same_recipient(
-    message_with_recipients,
+    message_with_recipients, settings
 ):
     """A second run must not re-deliver a recipient the first run already took.
 
@@ -157,6 +183,7 @@ def test_notify_new_message_does_not_publish_twice_to_the_same_recipient(
     the offline delivery task, reconnect recovery — must find nothing left to
     claim for that recipient.
     """
+    settings.CHAT_CHANNEL_GROUPS_ENABLED = False
     message, online_user, offline_user = message_with_recipients
 
     with (
@@ -182,7 +209,7 @@ def test_notify_new_message_does_not_publish_twice_to_the_same_recipient(
 
 
 def test_notify_new_message_returns_the_row_when_publishing_fails(
-    message_with_recipients,
+    message_with_recipients, settings
 ):
     """A claimed recipient whose publish failed goes back to 'sent'.
 
@@ -190,6 +217,7 @@ def test_notify_new_message_returns_the_row_when_publishing_fails(
     failed publish has to release the row — otherwise it reads as delivered and
     the delivery task will never retry it.
     """
+    settings.CHAT_CHANNEL_GROUPS_ENABLED = False
     message, online_user, offline_user = message_with_recipients
 
     with (
@@ -208,7 +236,11 @@ def test_notify_new_message_returns_the_row_when_publishing_fails(
     status = MessageStatus.objects.get(message=message, user=online_user)
     assert status.status == 'sent'
     assert status.delivered_at is None
-    schedule_delivery.assert_called_once_with(args=[message.id], countdown=5)
+    schedule_delivery.assert_called_once_with(
+        args=[message.id],
+        kwargs={'tenant_schema': 'public'},
+        countdown=5,
+    )
 
 
 def test_deliver_message_task_does_not_retry_users_who_remain_offline(
@@ -233,6 +265,31 @@ def test_deliver_message_task_does_not_retry_users_who_remain_offline(
     assert MessageStatus.objects.filter(message=message, status='sent').count() == 2
 
 
+def test_scheduled_message_creates_statuses_and_durable_outbox(message_with_recipients):
+    existing_message, _, _ = message_with_recipients
+    scheduled = ScheduledMessage.objects.create(
+        chat=existing_message.chat,
+        sender=existing_message.sender,
+        content='scheduled payload',
+        scheduled_at=timezone.now(),
+    )
+
+    send_scheduled_message(scheduled.id)
+
+    scheduled.refresh_from_db()
+    assert scheduled.status == ScheduledMessage.STATUS_SENT
+    assert scheduled.sent_message_id is not None
+    assert MessageStatus.objects.filter(message_id=scheduled.sent_message_id).count() == 2
+    assert set(
+        ChatOutboxEvent.objects.filter(
+            aggregate_id=scheduled.sent_message_id
+        ).values_list('event_type', flat=True)
+    ) == {
+        ChatOutboxEvent.EVENT_MESSAGE_REALTIME,
+        ChatOutboxEvent.EVENT_MESSAGE_NOTIFICATIONS,
+    }
+
+
 def test_chat_tasks_are_routed_to_dedicated_queues():
     expected_routes = {
         'chat.tasks.notify_new_message': 'chat.realtime',
@@ -250,3 +307,55 @@ def test_chat_tasks_are_routed_to_dedicated_queues():
         task_name: settings.CELERY_TASK_ROUTES[task_name]['queue']
         for task_name in expected_routes
     } == expected_routes
+
+
+def test_dispatch_pending_chat_outbox_marks_only_successful_publish():
+    first = ChatOutboxEvent.objects.create(
+        tenant_schema='org_alpha',
+        event_type=ChatOutboxEvent.EVENT_MESSAGE_REALTIME,
+        aggregate_id=101,
+    )
+    second = ChatOutboxEvent.objects.create(
+        tenant_schema='org_alpha',
+        event_type=ChatOutboxEvent.EVENT_MESSAGE_NOTIFICATIONS,
+        aggregate_id=101,
+    )
+
+    with patch('chat.tasks._publish_outbox_event') as publish:
+        published = dispatch_pending_chat_outbox()
+
+    assert published == 2
+    assert [call.args[0].id for call in publish.call_args_list] == [first.id, second.id]
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.published_at is not None
+    assert second.published_at is not None
+    assert first.attempt_count == 1
+    assert second.attempt_count == 1
+
+
+def test_dispatch_pending_chat_outbox_releases_batch_after_broker_failure():
+    first = ChatOutboxEvent.objects.create(
+        tenant_schema='org_alpha',
+        event_type=ChatOutboxEvent.EVENT_MESSAGE_REALTIME,
+        aggregate_id=201,
+    )
+    second = ChatOutboxEvent.objects.create(
+        tenant_schema='org_alpha',
+        event_type=ChatOutboxEvent.EVENT_MESSAGE_NOTIFICATIONS,
+        aggregate_id=201,
+    )
+
+    with patch('chat.tasks._publish_outbox_event', side_effect=RuntimeError('broker down')):
+        published = dispatch_pending_chat_outbox()
+
+    assert published == 0
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.published_at is None
+    assert first.claimed_at is None
+    assert first.attempt_count == 1
+    assert first.last_error == 'broker down'
+    assert second.published_at is None
+    assert second.claimed_at is None
+    assert second.attempt_count == 0

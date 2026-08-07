@@ -422,12 +422,8 @@ class TestMessageServiceIdempotentCreate:
         cache.clear()
 
     @patch('agent.tasks.handle_chat_message_for_agent.delay')
-    @patch('chat.tasks.notify_new_message.delay')
-    @patch('chat.tasks.notify_message_recipients.delay')
     def test_resolve_client_message_commits_does_not_query_per_message(
         self,
-        mock_notify_recipients,
-        mock_notify_ws,
         mock_agent_route,
         capture_on_commit_callbacks,
         django_assert_max_num_queries,
@@ -462,17 +458,13 @@ class TestMessageServiceIdempotentCreate:
         assert all(row['message']['id'] for row in result)
 
     @patch('agent.tasks.handle_chat_message_for_agent.delay')
-    @patch('chat.tasks.notify_new_message.delay')
-    @patch('chat.tasks.notify_message_recipients.delay')
     def test_create_message_with_attachments_dedupes_by_client_message_id(
         self,
-        mock_notify_recipients,
-        mock_notify_ws,
         mock_agent_route,
         capture_on_commit_callbacks,
     ):
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from chat.models import Message, MessageAttachment, MessageStatus
+        from chat.models import ChatOutboxEvent, Message, MessageAttachment, MessageStatus
         from chat.services import MessageService
 
         attachment = MessageAttachment.objects.create(
@@ -509,20 +501,22 @@ class TestMessageServiceIdempotentCreate:
         assert created_second is False
         assert second.id == first.id
         assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
-        assert MessageStatus.objects.filter(message=first).count() == 1
-        mock_notify_recipients.assert_called_once_with(first.id)
-        mock_notify_ws.assert_called_once_with(first.id)
+        assert MessageStatus.objects.filter(message=first).count() == 0
+        assert set(
+            ChatOutboxEvent.objects.filter(aggregate_id=first.id).values_list(
+                'event_type', flat=True
+            )
+        ) == {
+            ChatOutboxEvent.EVENT_MESSAGE_REALTIME,
+            ChatOutboxEvent.EVENT_MESSAGE_NOTIFICATIONS,
+        }
         mock_agent_route.assert_not_called()
 
-    @patch('chat.tasks.notify_new_message.delay')
-    @patch('chat.tasks.notify_message_recipients.delay')
     def test_create_without_client_message_id_always_creates(
         self,
-        mock_notify_recipients,
-        mock_notify_ws,
         capture_on_commit_callbacks,
     ):
-        from chat.models import Message
+        from chat.models import ChatOutboxEvent, Message
         from chat.services import MessageService
 
         with capture_on_commit_callbacks(execute=True):
@@ -540,19 +534,16 @@ class TestMessageServiceIdempotentCreate:
         assert created_second is True
         assert first.id != second.id
         assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 2
-        assert mock_notify_recipients.call_count == 2
-        assert mock_notify_ws.call_count == 2
+        assert ChatOutboxEvent.objects.filter(
+            aggregate_id__in=[first.id, second.id]
+        ).count() == 4
 
-    @patch('chat.tasks.notify_new_message.delay')
-    @patch('chat.tasks.notify_message_recipients.delay')
     def test_dedupe_via_integrity_error(
         self,
-        mock_notify_recipients,
-        mock_notify_ws,
         capture_on_commit_callbacks,
     ):
         from django.db import IntegrityError
-        from chat.models import Message, MessageStatus
+        from chat.models import ChatOutboxEvent, Message, MessageStatus
         from chat.services import MessageService
 
         client_message_id = 'integrity-error-client-001'
@@ -576,8 +567,7 @@ class TestMessageServiceIdempotentCreate:
         assert created is False
         assert message.id == existing.id
         assert Message.objects.filter(chat=self.chat, sender=self.sender).count() == 1
-        mock_notify_recipients.assert_not_called()
-        mock_notify_ws.assert_not_called()
+        assert not ChatOutboxEvent.objects.filter(aggregate_id=existing.id).exists()
 
     def test_non_dedupe_integrity_error_is_reraised(self):
         """A non-dedupe IntegrityError (a different constraint) must propagate,

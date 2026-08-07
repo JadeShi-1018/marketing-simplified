@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from functools import wraps
 from datetime import timedelta
 from typing import Any, Dict, Optional
 from celery import shared_task
@@ -7,13 +8,16 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import F, Q
 from django.utils import timezone
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from .models import Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
+from core.tenant_context import tenant_schema_context
+from .models import ChatOutboxEvent, Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
 from .realtime import broadcast_event_to_user_groups_sync
 from .services import (
     ChatService,
+    MessageService,
     OnlineStatusService,
     chat_group_name,
     claim_recipients_for_delivery,
@@ -23,6 +27,104 @@ from .url_helpers import build_messages_action_url
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def tenant_schema_task(task_function):
+    """Select the task's explicit tenant for all ORM work and always restore it."""
+    @wraps(task_function)
+    def wrapped(*args, **kwargs):
+        tenant_schema = kwargs.get('tenant_schema', 'public')
+        with tenant_schema_context(tenant_schema):
+            return task_function(*args, **kwargs)
+    return wrapped
+
+
+CHAT_OUTBOX_BATCH_SIZE = getattr(settings, 'CHAT_OUTBOX_BATCH_SIZE', 200)
+CHAT_OUTBOX_CLAIM_TTL_SECONDS = getattr(settings, 'CHAT_OUTBOX_CLAIM_TTL_SECONDS', 300)
+
+
+def _claim_pending_outbox_events():
+    """Claim a bounded public-schema batch without holding locks during Redis I/O."""
+    now = timezone.now()
+    stale_before = now - timedelta(seconds=CHAT_OUTBOX_CLAIM_TTL_SECONDS)
+    with tenant_schema_context('public'):
+        with transaction.atomic():
+            events = list(
+                ChatOutboxEvent.objects
+                .select_for_update(skip_locked=True)
+                .filter(published_at__isnull=True, available_at__lte=now)
+                .filter(Q(claimed_at__isnull=True) | Q(claimed_at__lt=stale_before))
+                .order_by('created_at', 'id')[:CHAT_OUTBOX_BATCH_SIZE]
+            )
+            if events:
+                ChatOutboxEvent.objects.filter(
+                    id__in=[event.id for event in events]
+                ).update(claimed_at=now)
+    return events
+
+
+def _publish_outbox_event(event: ChatOutboxEvent) -> None:
+    task_kwargs = {'tenant_schema': event.tenant_schema}
+    if event.event_type == ChatOutboxEvent.EVENT_MESSAGE_REALTIME:
+        notify_new_message.apply_async(args=[event.aggregate_id], kwargs=task_kwargs)
+        return
+    if event.event_type == ChatOutboxEvent.EVENT_MESSAGE_NOTIFICATIONS:
+        notify_message_recipients.apply_async(args=[event.aggregate_id], kwargs=task_kwargs)
+        return
+    raise ValueError(f'Unsupported chat outbox event type: {event.event_type}')
+
+
+@shared_task
+def dispatch_pending_chat_outbox() -> int:
+    """Publish durable chat events to Celery and mark successful hand-offs."""
+    events = _claim_pending_outbox_events()
+    published_count = 0
+
+    for index, event in enumerate(events):
+        try:
+            _publish_outbox_event(event)
+        except Exception as exc:
+            retry_delay = min(300, max(2, 2 ** min(event.attempt_count + 1, 8)))
+            with tenant_schema_context('public'):
+                ChatOutboxEvent.objects.filter(
+                    id=event.id,
+                    published_at__isnull=True,
+                ).update(
+                    claimed_at=None,
+                    available_at=timezone.now() + timedelta(seconds=retry_delay),
+                    attempt_count=F('attempt_count') + 1,
+                    last_error=str(exc)[:2000],
+                )
+                # A broker failure generally affects the whole batch. Release
+                # unattempted claims immediately and let the next sweep retry.
+                remaining_ids = [item.id for item in events[index + 1:]]
+                if remaining_ids:
+                    ChatOutboxEvent.objects.filter(
+                        id__in=remaining_ids,
+                        published_at__isnull=True,
+                    ).update(claimed_at=None)
+            logger.exception('Chat outbox publish failed for event %s', event.id)
+            break
+
+        with tenant_schema_context('public'):
+            ChatOutboxEvent.objects.filter(
+                id=event.id,
+                published_at__isnull=True,
+            ).update(
+                claimed_at=None,
+                published_at=timezone.now(),
+                attempt_count=F('attempt_count') + 1,
+                last_error='',
+            )
+        published_count += 1
+
+    if events:
+        logger.info(
+            'Chat outbox dispatch: claimed=%s published=%s',
+            len(events),
+            published_count,
+        )
+    return published_count
 
 
 def _build_forwarded_from_payload(message: Message) -> Optional[Dict[str, Any]]:
@@ -117,7 +219,8 @@ def _publish_to_chat_group(channel_layer, chat_id, claimed_user_ids, event):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
-def deliver_message_task(self, message_id: int):
+@tenant_schema_task
+def deliver_message_task(self, message_id: int, tenant_schema: str = 'public'):
     """
     Celery task to deliver a message to offline users.
     
@@ -131,6 +234,13 @@ def deliver_message_task(self, message_id: int):
         message = Message.objects.select_related(
             'chat', 'sender', 'reply_to', 'reply_to__sender'
         ).prefetch_related('attachments').get(id=message_id)
+        # Message creation commits only O(1) rows. The outbox guarantees this
+        # idempotent recipient fan-out is eventually executed after commit.
+        MessageService._create_recipient_statuses(
+            message,
+            message.sender,
+            ignore_conflicts=True,
+        )
         message_payload = build_realtime_message_payload(message)
 
         pending_statuses = list(MessageStatus.objects.filter(
@@ -242,7 +352,13 @@ def finalize_presence_offline_now(user_id: int, offline_token: str) -> bool:
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=5)
-def finalize_presence_offline(self, user_id: int, offline_token: str):
+@tenant_schema_task
+def finalize_presence_offline(
+    self,
+    user_id: int,
+    offline_token: str,
+    tenant_schema: str = 'public',
+):
     """Finalize delayed offline presence and notify online shared-chat users."""
     try:
         finalize_presence_offline_now(user_id, offline_token)
@@ -325,7 +441,13 @@ def cleanup_orphaned_attachments() -> int:
 
 
 @shared_task
-def send_typing_indicator(chat_id: int, user_id: int, is_typing: bool):
+@tenant_schema_task
+def send_typing_indicator(
+    chat_id: int,
+    user_id: int,
+    is_typing: bool,
+    tenant_schema: str = 'public',
+):
     """
     Celery task to broadcast typing indicator to chat participants.
     
@@ -368,7 +490,14 @@ def send_typing_indicator(chat_id: int, user_id: int, is_typing: bool):
 
 
 @shared_task(bind=True, max_retries=3)
-def update_message_status_task(self, message_id: int, user_id: int, status: str):
+@tenant_schema_task
+def update_message_status_task(
+    self,
+    message_id: int,
+    user_id: int,
+    status: str,
+    tenant_schema: str = 'public',
+):
     """
     Celery task to update message status and notify sender.
     
@@ -412,7 +541,12 @@ def update_message_status_task(self, message_id: int, user_id: int, status: str)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=5)
-def notify_new_message(self, message_id: int):
+@tenant_schema_task
+def notify_new_message(
+    self,
+    message_id: int,
+    tenant_schema: str = 'public',
+):
     """
     Celery task to notify all chat participants of a new message.
 
@@ -426,6 +560,11 @@ def notify_new_message(self, message_id: int):
         message = Message.objects.select_related(
             'chat', 'sender', 'reply_to', 'reply_to__sender'
         ).prefetch_related('attachments').get(id=message_id)
+        MessageService._create_recipient_statuses(
+            message,
+            message.sender,
+            ignore_conflicts=True,
+        )
         message_payload = build_realtime_message_payload(message)
 
         participant_ids = list(ChatParticipant.objects.filter(
@@ -440,6 +579,10 @@ def notify_new_message(self, message_id: int):
         event = {
             'type': 'chat_message',
             'message': message_payload,
+            # Chat groups also contain the sender's sockets. Preserve the REST
+            # contract (the sender already has the created response) without
+            # falling back to O(participants) Redis publishes.
+            'exclude_user_id': message.sender_id,
         }
 
         if getattr(settings, 'CHAT_CHANNEL_GROUPS_ENABLED', False):
@@ -469,6 +612,7 @@ def notify_new_message(self, message_id: int):
         if pending_user_ids:
             deliver_message_task.apply_async(
                 args=[message_id],
+                kwargs={'tenant_schema': tenant_schema},
                 countdown=5,
             )
 
@@ -503,7 +647,12 @@ def _notification_exists_for_message(*, recipient_id: int, event_type: str, mess
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def notify_message_recipients(self, message_id: int):
+@tenant_schema_task
+def notify_message_recipients(
+    self,
+    message_id: int,
+    tenant_schema: str = 'public',
+):
     """
     Create persisted in-app notifications for a newly-created chat message.
 
@@ -536,7 +685,7 @@ def notify_message_recipients(self, message_id: int):
         for recipient in recipients:
             if recipient.is_currently_muted():
                 continue
-            if recipient.notification_level == 'mentions':
+            if recipient.notification_level != 'all':
                 continue
             create_or_update_chat_notification(
                 recipient_id=recipient.user_id,
@@ -555,6 +704,8 @@ def notify_message_recipients(self, message_id: int):
             if participant is None:
                 continue
             if participant.is_currently_muted():
+                continue
+            if participant.notification_level == 'none':
                 continue
             if _notification_exists_for_message(
                 recipient_id=mention.mentioned_user_id,
@@ -591,14 +742,16 @@ def notify_message_recipients(self, message_id: int):
         if not root or root.chat_id != message.chat_id:
             return
 
-        muted_user_ids = {
+        thread_suppressed_user_ids = {
             participant.user_id
             for participant in ChatParticipant.objects.filter(
                 chat=message.chat,
                 is_active=True,
-                is_muted=True,
             )
-            if participant.is_currently_muted()
+            if (
+                participant.notification_level != 'all'
+                or participant.is_currently_muted()
+            )
         }
 
         notified_ids = {message.sender_id}
@@ -619,7 +772,7 @@ def notify_message_recipients(self, message_id: int):
         for recipient_id in candidate_ids:
             if recipient_id not in active_recipient_ids:
                 continue
-            if recipient_id in notified_ids or recipient_id in muted_user_ids:
+            if recipient_id in notified_ids or recipient_id in thread_suppressed_user_ids:
                 continue
             notified_ids.add(recipient_id)
             if _notification_exists_for_message(
@@ -658,7 +811,14 @@ def notify_message_recipients(self, message_id: int):
 
 
 @shared_task
-def notify_pin_update(chat_id: int, action: str, message_id: int, pin_data=None):
+@tenant_schema_task
+def notify_pin_update(
+    chat_id: int,
+    action: str,
+    message_id: int,
+    pin_data=None,
+    tenant_schema: str = 'public',
+):
     """Broadcast a shared pin change to every active member of a channel.
 
     Args:
@@ -710,7 +870,14 @@ def notify_pin_update(chat_id: int, action: str, message_id: int, pin_data=None)
 
 
 @shared_task
-def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: str):
+@tenant_schema_task
+def notify_reaction_update(
+    message_id: int,
+    user_id: int,
+    emoji: str,
+    action: str,
+    tenant_schema: str = 'public',
+):
     """
     Celery task to notify all chat participants of a reaction update.
 
@@ -812,7 +979,12 @@ def notify_reaction_update(message_id: int, user_id: int, emoji: str, action: st
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_scheduled_message(self, scheduled_message_id: int):
+@tenant_schema_task
+def send_scheduled_message(
+    self,
+    scheduled_message_id: int,
+    tenant_schema: str = 'public',
+):
     """
     Celery task that fires at the scheduled time and creates the actual Message.
 
@@ -879,6 +1051,9 @@ def send_scheduled_message(self, scheduled_message_id: int):
                 except Exception:
                     pass
 
+            MessageService._create_recipient_statuses(message, sm.sender)
+            MessageService._schedule_new_message_side_effects(message, sm.sender)
+
         # Finalize
         sm.status = ScheduledMessage.STATUS_SENT
         sm.sent_message = message
@@ -887,9 +1062,6 @@ def send_scheduled_message(self, scheduled_message_id: int):
         logger.info(
             f"send_scheduled_message {scheduled_message_id}: created message {message.id} in chat {sm.chat_id}"
         )
-
-        # Push to online participants
-        notify_new_message.delay(message.id)
 
     except Exception as exc:
         logger.error(f"send_scheduled_message {scheduled_message_id} failed: {exc}")

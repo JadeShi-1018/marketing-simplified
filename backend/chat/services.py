@@ -11,8 +11,9 @@ from django.db.models import Count, Q, Prefetch, Max
 from django.core.cache import cache
 from django.utils import timezone
 from django_redis import get_redis_connection
-from .models import Chat, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ChannelVisibility, ThreadReadStatus
+from .models import Chat, ChatOutboxEvent, ChatParticipant, ChatStar, Message, MessageAttachment, MessageMention, MessageStatus, ChatType, ChannelVisibility, ThreadReadStatus
 from core.models import ProjectMember
+from core.tenant_context import current_tenant_schema
 from .realtime import broadcast_event_to_user_groups_sync
 
 User = get_user_model()
@@ -34,8 +35,6 @@ class _OutboxAckSerializerRequest:
     def build_absolute_uri(self, url):
         return url
 
-
-from .metrics import chat_broadcast_enqueue_failures_total  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -1045,44 +1044,58 @@ class MessageService:
             message.save(update_fields=['has_attachments', 'updated_at'])
 
     @staticmethod
-    def _create_recipient_statuses(message: Message, sender: User) -> None:
-        recipients = ChatParticipant.objects.filter(
+    def _create_recipient_statuses(
+        message: Message,
+        sender: User,
+        *,
+        ignore_conflicts: bool = False,
+    ) -> None:
+        recipient_ids = ChatParticipant.objects.filter(
             chat=message.chat,
             is_active=True,
-        ).exclude(user=sender).select_related('user')
+        ).exclude(user=sender).values_list('user_id', flat=True)
         MessageStatus.objects.bulk_create([
             MessageStatus(
-                message=message,
-                user=recipient.user,
+                message_id=message.id,
+                user_id=recipient_id,
                 status='sent',
             )
-            for recipient in recipients
-        ])
+            for recipient_id in recipient_ids
+        ], batch_size=1000, ignore_conflicts=ignore_conflicts)
 
     @staticmethod
-    def _schedule_new_message_side_effects(message: Message, sender: User) -> None:
+    def _schedule_new_message_side_effects(
+        message: Message,
+        sender: User,
+        *,
+        include_notifications: bool = True,
+        route_agent: bool = True,
+    ) -> None:
         message_id = message.id
+        tenant_schema = current_tenant_schema()
 
-        def schedule_delivery() -> None:
-            from .tasks import notify_message_recipients, notify_new_message
-            try:
-                notify_message_recipients.delay(message_id)
-                notify_new_message.delay(message_id)
-            except Exception:
-                # The message is already committed at this point, so letting a
-                # broker failure escape would fail the request for a message
-                # that was in fact saved — and the client would retry a send
-                # that already succeeded. Recipients still get it: the
-                # MessageStatus rows exist, so reconnect recovery and history
-                # both deliver it. Counted because a user-visible "message did
-                # not appear" is otherwise invisible on the server side.
-                # Matches the pin path in views.py.
-                chat_broadcast_enqueue_failures_total.labels(event='message').inc()
-                logger.exception(
-                    'Failed to queue realtime delivery for message %s', message_id
+        # These rows are written in the same PostgreSQL transaction as Message
+        # and MessageStatus. A broker outage therefore cannot lose the hand-off:
+        # the public dispatcher will publish every still-pending row later.
+        outbox_events = [
+            ChatOutboxEvent(
+                tenant_schema=tenant_schema,
+                event_type=ChatOutboxEvent.EVENT_MESSAGE_REALTIME,
+                aggregate_id=message_id,
+            ),
+        ]
+        if include_notifications:
+            outbox_events.append(
+                ChatOutboxEvent(
+                    tenant_schema=tenant_schema,
+                    event_type=ChatOutboxEvent.EVENT_MESSAGE_NOTIFICATIONS,
+                    aggregate_id=message_id,
                 )
+            )
+        ChatOutboxEvent.objects.bulk_create(outbox_events, ignore_conflicts=True)
 
-        transaction.on_commit(schedule_delivery)
+        if not route_agent:
+            return
 
         def route_agent_bot() -> None:
             try:
@@ -1096,7 +1109,10 @@ class MessageService:
                 ).first()
                 if bot_participant:
                     from agent.tasks import handle_chat_message_for_agent
-                    handle_chat_message_for_agent.delay(message_id)
+                    handle_chat_message_for_agent.delay(
+                        message_id,
+                        tenant_schema=tenant_schema,
+                    )
             except Exception:
                 logger.exception(
                     'Failed to route message to agent bot for message %s',
@@ -1140,7 +1156,10 @@ class MessageService:
             )
 
         MessageService._link_attachments_to_message(message, sender, attachment_ids)
-        MessageService._create_recipient_statuses(message, sender)
+        # Recipient status fan-out is intentionally deferred to the durable
+        # realtime outbox task. Writing O(channel members) rows in each HTTP
+        # thread made 100 concurrent sends exhaust PostgreSQL connections and
+        # kept requests open for tens of seconds.
         MessageService._schedule_new_message_side_effects(message, sender)
 
         logger.info(
@@ -1330,6 +1349,16 @@ class MessageService:
             )
             for recipient in recipients
         ])
+
+        # Forwarding and other legacy service callers use this method too. Keep
+        # their realtime hand-off durable, while avoiding duplicate persisted
+        # notifications and agent routing already performed below.
+        MessageService._schedule_new_message_side_effects(
+            message,
+            sender,
+            include_notifications=False,
+            route_agent=False,
+        )
         
         logger.info(f"Created message {message.id} in chat {chat.id} by user {sender.id}")
 
@@ -1337,7 +1366,7 @@ class MessageService:
             from notifications.services import create_or_update_chat_notification
 
             for recipient in recipients:
-                if recipient.is_currently_muted() or recipient.notification_level == 'mentions':
+                if recipient.is_currently_muted() or recipient.notification_level != 'all':
                     continue
                 create_or_update_chat_notification(
                     recipient_id=recipient.user_id,
@@ -1363,7 +1392,10 @@ class MessageService:
                 ).first()
                 if bot_participant:
                     from agent.tasks import handle_chat_message_for_agent
-                    handle_chat_message_for_agent.delay(message.id)
+                    handle_chat_message_for_agent.delay(
+                        message.id,
+                        tenant_schema=current_tenant_schema(),
+                    )
         except Exception:
             logger.exception("Failed to route message to agent bot for message %s", message.id)
 
@@ -1862,8 +1894,7 @@ class MessageService:
                             uploader=user
                         )
 
-                    from .tasks import notify_new_message, build_realtime_message_payload
-                    notify_new_message.delay(new_message.id)
+                    from .tasks import build_realtime_message_payload
                     created_messages.append(build_realtime_message_payload(new_message))
                     succeeded_sends += 1
                 except MessageService.SourceAttachmentMissingError:

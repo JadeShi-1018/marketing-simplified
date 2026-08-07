@@ -54,9 +54,10 @@ from .services import (
     validate_attachment_mime_type,
 )
 from .metrics import chat_broadcast_enqueue_failures_total
-from .tasks import notify_message_recipients, notify_new_message, notify_pin_update, send_scheduled_message
+from .tasks import notify_pin_update, send_scheduled_message
 from core.models import ProjectMember
 from core.slug_mixins import resolve_project_pk, SlugLookupViewSetMixin
+from core.tenant_context import current_tenant_schema
 
 logger = logging.getLogger(__name__)
 
@@ -203,10 +204,17 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         publication per member before the caller gets a response.
         """
         chat_id = chat.id
+        tenant_schema = current_tenant_schema()
 
         def enqueue() -> None:
             try:
-                notify_pin_update.delay(chat_id, action, message_id, pin_data)
+                notify_pin_update.delay(
+                    chat_id,
+                    action,
+                    message_id,
+                    pin_data,
+                    tenant_schema=tenant_schema,
+                )
             except Exception:
                 # A broker failure must never roll back a pin that has already
                 # been persisted successfully. The pin is durable either way;
@@ -1008,23 +1016,24 @@ class MessageViewSet(viewsets.ModelViewSet):
             message = serializer.save()
             created = getattr(serializer, '_message_created', True)
 
-            # The response embeds one delivery status per recipient, each with a
-            # nested user. Without prefetching that user, sending into a large
-            # channel costs one extra query per recipient inside the request.
+            # Keep the create response independent of channel size. The sender
+            # only needs the committed message; recipient statuses are durable
+            # server-side delivery bookkeeping and are available on normal
+            # message reads. Serializing 99 nested users for every send caused
+            # large responses and kept ASGI database connections occupied.
             message = Message.objects.select_related(
-                'sender', 'reply_to', 'reply_to__sender'
-            ).prefetch_related('attachments', 'statuses__user').get(id=message.id)
+                'sender', 'reply_to', 'reply_to__sender', 'forwarded_from_message'
+            ).prefetch_related(
+                'attachments',
+                'reply_to__attachments',
+                'mentions__mentioned_user',
+            ).get(id=message.id)
 
-            # One batched presence read instead of one per embedded status user.
-            presence_user_ids = {status.user_id for status in message.statuses.all()}
-            presence_user_ids.add(message.sender_id)
             response_serializer = MessageWithAttachmentsSerializer(
                 message,
                 context={
                     'request': request,
-                    'online_user_ids': set(
-                        OnlineStatusService.get_online_users(list(presence_user_ids))
-                    ),
+                    'send_response': True,
                 },
             )
             logger.info(
@@ -1285,7 +1294,13 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         # Notify via WebSocket
         from .tasks import notify_reaction_update
-        notify_reaction_update.delay(message.id, request.user.id, emoji, action_taken)
+        notify_reaction_update.delay(
+            message.id,
+            request.user.id,
+            emoji,
+            action_taken,
+            tenant_schema=current_tenant_schema(),
+        )
 
         # Return updated reactions
         message.refresh_from_db()
@@ -1337,7 +1352,13 @@ class MessageViewSet(viewsets.ModelViewSet):
 
         # Notify via WebSocket
         from .tasks import notify_reaction_update
-        notify_reaction_update.delay(message.id, request.user.id, emoji, 'removed')
+        notify_reaction_update.delay(
+            message.id,
+            request.user.id,
+            emoji,
+            'removed',
+            tenant_schema=current_tenant_schema(),
+        )
 
         # Return updated reactions
         message.refresh_from_db()
@@ -1930,7 +1951,11 @@ class ScheduledMessageViewSet(
         )
 
         # Dispatch Celery task with ETA
-        result = send_scheduled_message.apply_async(args=[sm.id], eta=sm.scheduled_at)
+        result = send_scheduled_message.apply_async(
+            args=[sm.id],
+            kwargs={'tenant_schema': current_tenant_schema()},
+            eta=sm.scheduled_at,
+        )
         sm.task_id = result.id
         sm.save(update_fields=['task_id', 'updated_at'])
 

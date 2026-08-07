@@ -108,6 +108,9 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django_prometheus.middleware.PrometheusBeforeMiddleware",
+    # Protect PostgreSQL before tenant/auth/custom middleware opens a DB
+    # connection. Excess requests wait here instead of failing at max_connections.
+    'core.middleware.database_concurrency.DatabaseConcurrencyLimitMiddleware',
     'stripe_meta.middleware.UsageTrackingMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
@@ -234,6 +237,19 @@ DATABASES = {
         }
     }
 }
+
+# This is a per-web-process admission limit, not a replacement for PgBouncer.
+# Keep headroom for Celery, WebSocket ORM calls, migrations and monitoring.
+DATABASE_REQUEST_CONCURRENCY = config(
+    'DATABASE_REQUEST_CONCURRENCY',
+    default=20,
+    cast=int,
+)
+DATABASE_REQUEST_QUEUE_TIMEOUT_SECONDS = config(
+    'DATABASE_REQUEST_QUEUE_TIMEOUT_SECONDS',
+    default=30,
+    cast=float,
+)
 
 USE_SQLITE_FOR_TESTS = config('USE_SQLITE_FOR_TESTS', default=False, cast=bool)
 if USE_SQLITE_FOR_TESTS:
@@ -482,10 +498,31 @@ CHAT_FANOUT_CONCURRENCY = config('CHAT_FANOUT_CONCURRENCY', default=25, cast=int
 # Measured at 100 concurrent users in one channel, against the same run with
 # the flag off: Redis zadd 40,682 -> publish 3,554, deliveries 5,549 -> 10,000,
 # delivery p95 21.9s -> 16.1s.
-CHAT_CHANNEL_GROUPS_ENABLED = config('CHAT_CHANNEL_GROUPS_ENABLED', default=False, cast=bool)
+CHAT_CHANNEL_GROUPS_ENABLED = config('CHAT_CHANNEL_GROUPS_ENABLED', default=True, cast=bool)
+
+# Bound independent post-accept ORM work. One thread serialized 100 sockets;
+# an unbounded executor would instead exhaust PostgreSQL connections.
+CHAT_CONNECTION_INIT_CONCURRENCY = config(
+    'CHAT_CONNECTION_INIT_CONCURRENCY',
+    default=10,
+    cast=int,
+)
+
+# Recovery is paged to keep individual queries bounded, but one reconnect must
+# not silently stop after the first 50 durable messages.
+CHAT_RECONNECT_RECOVERY_MAX_MESSAGES = config(
+    'CHAT_RECONNECT_RECOVERY_MAX_MESSAGES',
+    default=500,
+    cast=int,
+)
 
 # Celery Beat Configuration for Periodic Tasks
 CELERY_BEAT_SCHEDULE = {
+    'dispatch-pending-chat-outbox': {
+        'task': 'chat.tasks.dispatch_pending_chat_outbox',
+        'schedule': timedelta(seconds=1),
+        'options': {'queue': 'celery'},
+    },
     # 'reset-daily-usage': {   # disabled — UsageDaily replaced by token-based billing
     #     'task': 'stripe_meta.tasks.reset_daily_usage',
     #     'schedule': crontab(hour=0, minute=0),

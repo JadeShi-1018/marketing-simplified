@@ -207,6 +207,26 @@ class MessageSerializer(MessageContentValidationMixin, serializers.ModelSerializ
     has_unread_thread_replies = serializers.SerializerMethodField()
     parent_message_id = serializers.IntegerField(read_only=True, allow_null=True)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.context.get('send_response'):
+            # A create response is immediately rendered only by the sender.
+            # Recipient and thread aggregates are available from normal reads
+            # and realtime status events; calculating them here makes send
+            # latency grow with channel size and adds several ORM queries.
+            for field_name in (
+                'statuses',
+                'reactions',
+                'is_hidden_by_me',
+                'thread_reply_count',
+                'thread_last_reply_at',
+                'thread_participants',
+                'has_unread_thread_replies',
+            ):
+                self.fields.pop(field_name, None)
+        elif self.context.get('omit_recipient_statuses'):
+            self.fields.pop('statuses', None)
+
     class Meta:
         model = Message
         fields = [

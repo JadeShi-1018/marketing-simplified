@@ -2,6 +2,8 @@ import logging
 import json
 import asyncio
 import uuid
+import weakref
+from functools import wraps
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from asgiref.sync import sync_to_async
@@ -11,6 +13,7 @@ from django.core.cache import cache
 from .models import Chat, ChatParticipant, Message, MessageStatus
 from .realtime import broadcast_event_to_user_groups
 from django.conf import settings
+from core.tenant_context import tenant_schema_context, validate_tenant_schema
 from .services import (
     ChatService,
     MessageService,
@@ -33,6 +36,30 @@ TYPING_THROTTLE_SECONDS = 1
 # Upper bound on the outbox digest a client may send in one frame, so a
 # malicious/buggy client can't force an oversized DB IN query or WS frame.
 MAX_OUTBOX_DIGEST_IDS = 500
+_CONNECTION_INIT_SEMAPHORES = weakref.WeakKeyDictionary()
+
+
+def connection_init_semaphore():
+    """Return one loop-local bound for post-accept tenant DB initialization."""
+    loop = asyncio.get_running_loop()
+    semaphore = _CONNECTION_INIT_SEMAPHORES.get(loop)
+    if semaphore is None:
+        concurrency = max(
+            1,
+            int(getattr(settings, 'CHAT_CONNECTION_INIT_CONCURRENCY', 10)),
+        )
+        semaphore = asyncio.Semaphore(concurrency)
+        _CONNECTION_INIT_SEMAPHORES[loop] = semaphore
+    return semaphore
+
+
+def tenant_db_method(method):
+    """Run a consumer's synchronous ORM method in its authenticated tenant."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with tenant_schema_context(getattr(self, 'tenant_schema', 'public')):
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
@@ -60,6 +87,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
         """Handle WebSocket connection"""
         self.user_id = self.scope['url_route']['kwargs']['user_id']
         self.user = self.scope.get('user')
+        self.tenant_schema = validate_tenant_schema(
+            self.scope.get('tenant_schema', 'public')
+        )
         self.presence_connection_id = uuid.uuid4().hex
         
         # Verify authentication
@@ -81,35 +111,82 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         
-        # Track this websocket so one closed tab does not mark a still-connected user offline.
-        connection_count, became_online, presence_version = await sync_to_async(
-            OnlineStatusService.connection_opened,
-            thread_sensitive=False,
-        )(self.user.id, self.presence_connection_id)
-        
         await self.accept()
-        logger.info(f"[WebSocket] User {self.user_id} ({self.user.username}) connected and marked as ONLINE")
+        logger.info(
+            "[WebSocket] User %s (%s) connected; initializing chat groups",
+            self.user_id,
+            self.user.username,
+        )
 
-        # Joined after accept so a large membership does not extend the
-        # handshake, which daphne times out.
         self.joined_chat_groups = set()
-        await self.sync_chat_groups()
+        self.presence_registered = False
+        # Return from connect immediately so channel-layer events can be
+        # consumed. Presence snapshots and queued-message recovery perform ORM
+        # work; doing them inline serialized 100 connects and left accepted
+        # sockets unable to process realtime events for 30+ seconds.
+        self.initialization_task = asyncio.create_task(
+            self.initialize_after_accept()
+        )
 
-        presence_recipient_ids = await database_sync_to_async(self.get_presence_recipient_ids)()
-        await self.send_presence_snapshot(presence_recipient_ids)
+    async def initialize_after_accept(self):
+        try:
+            async with connection_init_semaphore():
+                # A socket is not delivery-ready until it has joined every chat
+                # group it is entitled to. Publishing presence before this point
+                # lets realtime fan-out mark a recipient delivered even though
+                # the group cannot reach that connection yet.
+                await self.sync_chat_groups()
 
-        if became_online:
-            await self.broadcast_presence_update(
-                is_online=True,
-                recipient_ids=presence_recipient_ids,
-                version=presence_version,
+                connection_count, became_online, presence_version = await sync_to_async(
+                    OnlineStatusService.connection_opened,
+                    thread_sensitive=False,
+                )(self.user.id, self.presence_connection_id)
+                self.presence_registered = True
+
+                # Drain durable offline messages before telling the client it is
+                # ready to send. The K6/browser client starts writes on the
+                # snapshot, so this ordering prevents recovery frames from
+                # starving fresh realtime traffic.
+                await self.send_queued_messages()
+
+                presence_recipient_ids = await database_sync_to_async(
+                    self.get_presence_recipient_ids,
+                    thread_sensitive=False,
+                )()
+                await self.send_presence_snapshot(presence_recipient_ids)
+
+                if became_online:
+                    await self.broadcast_presence_update(
+                        is_online=True,
+                        recipient_ids=presence_recipient_ids,
+                        version=presence_version,
+                    )
+
+                logger.info(
+                    "[WebSocket] User %s (%s) initialized and marked ONLINE "
+                    "(connections: %s)",
+                    self.user_id,
+                    self.user.username,
+                    connection_count,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                '[WebSocket] Post-accept initialization failed for user %s',
+                self.user_id,
             )
-        
-        # Send any queued messages
-        await self.send_queued_messages()
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
+        initialization_task = getattr(self, 'initialization_task', None)
+        if initialization_task and not initialization_task.done():
+            initialization_task.cancel()
+            try:
+                await initialization_task
+            except asyncio.CancelledError:
+                pass
+
         # Leave the chat groups but keep the names: the offline presence
         # broadcast below still has to reach the same audience, and this
         # connection must not be in the group while that is published or it
@@ -125,7 +202,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
 
             # Mark user offline only after their last websocket disconnects.
-            if hasattr(self, 'user') and self.user:
+            if (
+                hasattr(self, 'user')
+                and self.user
+                and getattr(self, 'presence_registered', False)
+            ):
                 remaining_connections, offline_token = await sync_to_async(
                     OnlineStatusService.connection_closed,
                     thread_sensitive=False,
@@ -138,6 +219,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     if OnlineStatusService.OFFLINE_GRACE_SECONDS > 0:
                         finalize_presence_offline.apply_async(
                             args=[self.user.id, offline_token],
+                            kwargs={'tenant_schema': self.tenant_schema},
                             countdown=OnlineStatusService.OFFLINE_GRACE_SECONDS,
                         )
                     else:
@@ -147,9 +229,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
                         # InMemoryChannelLayer asyncio queues are accessed from a
                         # worker thread while the test event loop is still running.
                         version, recipient_ids = await sync_to_async(
-                            get_offline_broadcast_params,
+                            self.get_offline_broadcast_params,
                             thread_sensitive=False,
-                        )(self.user.id, offline_token)
+                        )(offline_token)
                         if version is not None and recipient_ids:
                             await self.broadcast_presence_update(
                                 is_online=False,
@@ -169,7 +251,9 @@ class ChatConsumer(AsyncWebsocketConsumer):
             message_type = data.get('type')
             
             if message_type == 'chat_message':
-                await self.handle_chat_message(data)
+                await self.send_error(
+                    'WebSocket message creation is disabled; send messages through the REST API.'
+                )
             elif message_type == 'typing_start':
                 await self.handle_typing_start(data)
             elif message_type == 'typing_stop':
@@ -386,47 +470,70 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
     
     async def send_queued_messages(self):
-        """Send this user's pending messages, claiming each before writing it."""
-        claimed_messages = []
-        sent_message_ids = []
-        try:
-            claimed_messages = await database_sync_to_async(
-                self.get_claimed_queued_messages
-            )()
+        """Send bounded pages of pending messages before declaring the socket ready."""
+        page_size = 50
+        max_messages = max(
+            page_size,
+            int(getattr(settings, 'CHAT_RECONNECT_RECOVERY_MAX_MESSAGES', 500)),
+        )
+        total_claimed = 0
+        total_sent = 0
+        total_released = 0
 
-            for claimed in claimed_messages:
-                await self.send(text_data=json.dumps({
-                    'type': 'chat_message',
-                    'message': claimed['message'],
-                }))
-                sent_message_ids.append(claimed['message_id'])
+        while total_claimed < max_messages:
+            claimed_messages = []
+            sent_message_ids = []
+            try:
+                claimed_messages = await database_sync_to_async(
+                    self.get_claimed_queued_messages,
+                    thread_sensitive=False,
+                )()
+                if not claimed_messages:
+                    break
 
-        except Exception as e:
-            logger.error(f"Error sending queued messages: {e}")
-        finally:
-            # Claiming already marked these delivered, so only the ones we did
-            # not manage to write need handing back.
-            unsent = [
-                claimed['message_id'] for claimed in claimed_messages
-                if claimed['message_id'] not in set(sent_message_ids)
-            ]
-            released = 0
-            if unsent:
-                released = await database_sync_to_async(
-                    self._release_unsent_messages
-                )(unsent)
-            logger.info(
-                "Queued message recovery: user=%s claimed=%s sent=%s released=%s",
-                self.user_id,
-                len(claimed_messages),
-                len(sent_message_ids),
-                released,
-            )
+                for claimed in claimed_messages:
+                    await self.send(text_data=json.dumps({
+                        'type': 'chat_message',
+                        'message': claimed['message'],
+                    }))
+                    sent_message_ids.append(claimed['message_id'])
+            except Exception as exc:
+                logger.error("Error sending queued messages: %s", exc)
+            finally:
+                # Claiming already marked these delivered, so only the ones we
+                # did not manage to write need handing back.
+                sent_ids = set(sent_message_ids)
+                unsent = [
+                    claimed['message_id'] for claimed in claimed_messages
+                    if claimed['message_id'] not in sent_ids
+                ]
+                if unsent:
+                    total_released += await database_sync_to_async(
+                        self._release_unsent_messages,
+                        thread_sensitive=False,
+                    )(unsent)
+
+            total_claimed += len(claimed_messages)
+            total_sent += len(sent_message_ids)
+            if len(sent_message_ids) != len(claimed_messages):
+                break
+            if len(claimed_messages) < page_size:
+                break
+
+        logger.info(
+            "Queued message recovery: user=%s claimed=%s sent=%s released=%s",
+            self.user_id,
+            total_claimed,
+            total_sent,
+            total_released,
+        )
     
     # Channel layer handlers (called by group_send)
     
     async def chat_message(self, event):
         """Send chat message to WebSocket"""
+        if str(event.get('exclude_user_id', '')) == str(self.user.id):
+            return
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
             'message': event['message']
@@ -521,12 +628,14 @@ class ChatConsumer(AsyncWebsocketConsumer):
         }))
     
     # Database operations (sync)
-    
+
+    @tenant_db_method
     def create_message(self, chat_id, content):
         """Create a message in the database"""
         chat = Chat.objects.get(id=chat_id)
         return MessageService.create_message(chat, self.user, content)
     
+    @tenant_db_method
     def get_chat_participants(self, chat_id, exclude_user_id=None):
         """Get list of participant IDs for a chat"""
         query = ChatParticipant.objects.filter(
@@ -539,9 +648,18 @@ class ChatConsumer(AsyncWebsocketConsumer):
         
         return list(query.values_list('user_id', flat=True))
 
+    @tenant_db_method
     def get_presence_recipient_ids(self):
         """Users sharing an active chat with this user should receive presence changes."""
         return ChatService.get_presence_recipient_ids(self.user.id)
+
+    @tenant_db_method
+    def get_offline_broadcast_params(self, offline_token):
+        return get_offline_broadcast_params(self.user.id, offline_token)
+
+    @tenant_db_method
+    def get_joinable_chat_ids(self):
+        return get_joinable_chat_ids(self.user.id)
 
     async def send_presence_snapshot(self, user_ids=None):
         try:
@@ -570,7 +688,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
         if not getattr(settings, 'CHAT_CHANNEL_GROUPS_ENABLED', False):
             return
         try:
-            chat_ids = await database_sync_to_async(get_joinable_chat_ids)(self.user.id)
+            chat_ids = await database_sync_to_async(
+                self.get_joinable_chat_ids,
+                thread_sensitive=False,
+            )()
             allowed = {chat_group_name(chat_id) for chat_id in chat_ids}
             current = getattr(self, 'joined_chat_groups', set())
 
@@ -665,6 +786,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         except Exception as e:
             logger.error(f"Error broadcasting presence update for user {self.user_id}: {e}")
 
+    @tenant_db_method
     def allow_typing_event(self, chat_id, is_typing):
         cache_key = f"chat:typing:{self.user.id}:{chat_id}:{int(is_typing)}"
         return cache.add(cache_key, True, timeout=TYPING_THROTTLE_SECONDS)
@@ -672,16 +794,19 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def _allow_typing_event(self, chat_id, is_typing):
         return await database_sync_to_async(self.allow_typing_event)(chat_id, is_typing)
     
+    @tenant_db_method
     def mark_message_read(self, message_id):
         """Mark a message as read"""
         message = Message.objects.get(id=message_id)
         MessageService.mark_message_as_read(message, self.user)
     
+    @tenant_db_method
     def _mark_message_delivered(self, message_id):
         """Mark a message as delivered (helper for async context)"""
         message = Message.objects.get(id=message_id)
         MessageService.mark_message_as_delivered(message, self.user)
 
+    @tenant_db_method
     def _release_unsent_messages(self, message_ids):
         """Hand back rows we claimed but never wrote to the socket.
 
@@ -694,17 +819,20 @@ class ChatConsumer(AsyncWebsocketConsumer):
         return released
 
 
+    @tenant_db_method
     def get_message_sender(self, message_id):
         """Get the sender ID of a message"""
         message = Message.objects.get(id=message_id)
         return message.sender.id
     
+    @tenant_db_method
     def get_queued_messages(self):
         """Get queued messages for this user (messages with 'sent' status)"""
         statuses = self._get_queued_statuses()
 
         return [build_realtime_message_payload(status.message) for status in statuses]
 
+    @tenant_db_method
     def get_claimed_queued_messages(self):
         """Claim one bounded reconnect page so the delivery task cannot race it.
 

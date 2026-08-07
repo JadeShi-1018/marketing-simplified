@@ -92,7 +92,7 @@ class TestChatConsumer:
             await _disconnect_communicators(communicator)
 
     async def test_websocket_send_message(self, db):
-        """Test sending a message via WebSocket"""
+        """Legacy WebSocket creation is rejected so REST/outbox cannot be bypassed."""
         user1 = await self._create_user('user1', 'user1@example.com')
         user2 = await self._create_user('user2', 'user2@example.com')
         org = await self._create_organization('Test Org')
@@ -115,9 +115,10 @@ class TestChatConsumer:
             assert snapshot['type'] == 'presence_snapshot'
             await communicator1.send_json_to({'type': 'chat_message', 'chat_id': chat.id, 'content': 'Hello, this is a test message!'})
             response = await communicator1.receive_json_from(timeout=5)
-            assert response['type'] == 'chat_message'
-            assert response['message']['content'] == 'Hello, this is a test message!'
-            assert response['message']['chat_id'] == chat.id
+            assert response == {
+                'type': 'error',
+                'message': 'WebSocket message creation is disabled; send messages through the REST API.',
+            }
         finally:
             await _disconnect_communicators(communicator1)
 
