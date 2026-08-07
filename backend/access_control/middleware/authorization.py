@@ -3,7 +3,8 @@ from django.utils import timezone
 from django.db.models import Q
 from django.db import connection
 from datetime import timedelta
-from core.models import Permission
+from core.models import Organization
+from core.services.tenant import slug_to_schema_name
 from access_control.models import RolePermission, UserRole, AdminOverrideAudit
 from typing import Optional, Callable, Any
 from functools import wraps
@@ -21,6 +22,19 @@ class AuthorizationMiddleware:
         'PUT': 'EDIT',
         'PATCH': 'APPROVE',
         'DELETE': 'DELETE',
+    }
+
+    # Explicit URL-segment → module mapping, replacing the old raw.rstrip('s')
+    # guess (which mangled anything not a simple plural, e.g. 'canvas' ->
+    # 'CANVA', 'sms' -> 'SM'). Only covers segments that map directly to a
+    # Permission.MODULE_CHOICES value at the top-level /api/<segment>/ path —
+    # e.g. budgets/queues/tickets/invitations live one level deeper
+    # (/api/budgets/requests/, /api/csm/tickets/, /api/core/invitations/) and
+    # were never reachable through this top-level check even under the old
+    # logic, so they're intentionally not added here.
+    MODULE_PATH_MAP = {
+        'assets': 'ASSET',
+        'campaigns': 'CAMPAIGN',
     }
 
     def __init__(self, get_response=None):
@@ -46,9 +60,8 @@ class AuthorizationMiddleware:
         action_key = None
         if len(parts) >= 2 and parts[0] == 'api':
             raw = parts[1]
-            candidate_module = raw.rstrip('s').upper()  # e.g. 'assets' -> 'ASSET'
-            allowed_modules = {value for value, _ in Permission.MODULE_CHOICES}
-            if candidate_module in allowed_modules:
+            candidate_module = self.MODULE_PATH_MAP.get(raw)
+            if candidate_module is not None:
                 module_key = candidate_module
                 # Special-case URL segments for approve/export actions
                 if len(parts) >= 4 and parts[3] == 'approve':
@@ -132,6 +145,42 @@ class AuthorizationMiddleware:
         # Deny if no matching permission found
         return JsonResponse({'detail': 'Permission denied'}, status=403)
 
+    def _resolve_org_id_from_search_path(self):
+        """
+        Resolve the Organization whose tenant schema matches the DB
+        connection's *current* search_path, rather than trusting
+        user.current_organization_id.
+
+        TenantSchemaMiddleware runs before this middleware and has already
+        issued `SET search_path TO org_xxx, public` for this request. Reading
+        it back here — instead of the user's saved current_organization_id —
+        guarantees the audit row's organization always matches the tenant
+        schema the row is actually written into. user.current_organization_id
+        can diverge from that: it's a value cached on the user object, and a
+        request can be served against a different org's schema than the
+        user's own "current" org (e.g. an org-scoped token/header switched
+        the schema for just this request without updating the user row).
+        """
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute('SHOW search_path')
+                search_path = cursor.fetchone()[0]
+            schema_name = search_path.split(',')[0].strip().strip('"')
+            if schema_name in ('public', '$user'):
+                return None
+            # slug_to_schema_name() isn't reliably reversible in general (it
+            # collapses every non-alphanumeric character to '_'), so match by
+            # recomputing the forward transform per org rather than parsing
+            # the schema name back into a slug. This only runs on override
+            # events (superuser/org-admin bypasses), which are rare, so a
+            # full scan of organizations is not a hot-path concern.
+            for org_id, slug in Organization.objects.filter(is_deleted=False).values_list('id', 'slug'):
+                if slug_to_schema_name(slug) == schema_name:
+                    return org_id
+            return None
+        except Exception:
+            return None
+
     def _log_override(self, request, user, override_type, module_key, action_key):
         """
         Record an audit row when a superuser/org-admin bypasses the module
@@ -139,7 +188,7 @@ class AuthorizationMiddleware:
         the request the bypass already allowed.
         """
         try:
-            org_id = getattr(user, 'current_organization_id', None) or getattr(user, 'organization_id', None)
+            org_id = self._resolve_org_id_from_search_path()
             AdminOverrideAudit.objects.create(
                 user=user,
                 organization_id=org_id,
