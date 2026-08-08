@@ -516,12 +516,12 @@ class TestPinnedMessagesAPI:
                 response = self.client.delete(self.unpin_url())
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        queued_task.delay.assert_called_once_with(
-            self.chat.id,
-            'unpinned',
-            self.message.id,
-            None,
-        )
+        queued_task.delay.assert_called_once()
+        chat_id, action, message_id, pin_data = queued_task.delay.call_args.args
+        assert chat_id == self.chat.id
+        assert action == 'unpinned'
+        assert message_id == self.message.id
+        assert pin_data is None
 
     def test_queued_pin_broadcast_reaches_every_active_member(self):
         """The task must still fan out to all active members, online or not."""

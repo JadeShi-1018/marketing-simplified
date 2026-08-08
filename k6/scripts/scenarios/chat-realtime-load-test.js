@@ -45,11 +45,11 @@ export const options = {
     },
   },
   thresholds: {
-    checks: ['rate>0.99'],
-    chat_send_failed: ['rate<0.01'],
-    chat_ws_connect_failed: ['rate<0.01'],
-    chat_send_http_ms: [`p(95)<${Number(__ENV.HTTP_P95_MS || 1000)}`],
-    chat_ws_delivery_ms: [`p(95)<${Number(__ENV.WS_P95_MS || 2000)}`],
+    checks: ['rate==1.0'],
+    chat_send_failed: ['rate==0'],
+    chat_ws_connect_failed: ['rate==0'],
+    chat_send_http_ms: [`p(95)<${Number(__ENV.HTTP_P95_MS || 500)}`],
+    chat_ws_delivery_ms: [`p(95)<${Number(__ENV.WS_P95_MS || 1000)}`],
     chat_ws_duplicate_messages: ['count==0'],
   },
   tags: {

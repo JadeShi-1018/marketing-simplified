@@ -232,6 +232,9 @@ DATABASES = {
         # max_connections to fit the real thread count), not this setting.
         # REMOVED: 'OPTIONS': {'options': '-c search_path=public'}
         # TenantSchemaMiddleware dynamically sets search_path per request
+        'OPTIONS': {
+            'application_name': config('PG_APPLICATION_NAME', default='django_web'),
+        },
         'TEST': {
             'NAME': 'test_mediajira_db',
         }

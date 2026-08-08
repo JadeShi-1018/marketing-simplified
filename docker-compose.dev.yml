@@ -12,6 +12,26 @@ services:
       timeout: 5s
       retries: 5
 
+  # PgBouncer connection pooler — sits between Django/Celery and PostgreSQL.
+  # Transaction-pooling mode returns connections at transaction end, which
+  # matches Django's default CONN_MAX_AGE=0.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pgbouncer-dev
+    restart: always
+    ports:
+      - "6432:6432"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # SonarQube
   # sonarqube:
   #   build: 
@@ -67,6 +87,8 @@ services:
       - .env
     environment:
       - DB_HOST=host.docker.internal
+      - DB_PORT=6432
+      - PG_APPLICATION_NAME=daphne_web
       - DEBUG=True
       # - SONAR_USER=${SONAR_USER}
       # - SONAR_PWD=${SONAR_PWD}
@@ -76,6 +98,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
       clamav:
@@ -156,10 +180,14 @@ services:
       - .env
     environment:
       - DB_HOST=host.docker.internal
+      - DB_PORT=6432
+      - PG_APPLICATION_NAME=celery_default
       - DEBUG=True
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
       clamav:
@@ -169,15 +197,53 @@ services:
     command: celery -A backend worker --loglevel=info --pool=threads --concurrency=4 -Q celery
 
   celery-chat-realtime:
-    extends:
-      service: celery-worker
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    image: marketing-simplified-celery-worker
     container_name: celery-chat-realtime-dev
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=host.docker.internal
+      - DB_PORT=6432
+      - PG_APPLICATION_NAME=celery_chat_realtime
+      - DEBUG=True
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
     command: celery -A backend worker --loglevel=info --pool=threads --concurrency=${CHAT_REALTIME_WORKER_CONCURRENCY:-4} -Q chat.realtime
 
   celery-chat-background:
-    extends:
-      service: celery-worker
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    image: marketing-simplified-celery-worker
     container_name: celery-chat-background-dev
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=host.docker.internal
+      - DB_PORT=6432
+      - PG_APPLICATION_NAME=celery_chat_background
+      - DEBUG=True
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
     command: celery -A backend worker --loglevel=info --pool=threads --concurrency=${CHAT_BACKGROUND_WORKER_CONCURRENCY:-2} -Q chat.notifications,chat.delivery
 
   celery-beat:
@@ -190,10 +256,14 @@ services:
       - .env
     environment:
       - DB_HOST=host.docker.internal
+      - DB_PORT=6432
+      - PG_APPLICATION_NAME=celery_beat_outbox
       - DEBUG=True
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
     volumes:

@@ -26,6 +26,22 @@ services:
       timeout: 10s
       retries: 3
 
+  # PgBouncer connection pooler — transaction pooling mode.
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pgbouncer-preview
+    restart: always
+    volumes:
+      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: 
       context: ./backend
@@ -38,6 +54,7 @@ services:
       - .env
     environment:
       - DB_HOST=${DB_HOST}
+      - DB_PORT=6432
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
@@ -50,6 +67,8 @@ services:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
     depends_on:
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
       clamav:
@@ -117,10 +136,13 @@ services:
       - .env
     environment:
       - DB_HOST=${DB_HOST}
+      - DB_PORT=6432
       - DEBUG=False
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
     depends_on:
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
       clamav:

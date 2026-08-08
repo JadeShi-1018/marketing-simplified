@@ -1,0 +1,133 @@
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: Chat Outbox and Database Alerts
+    folder: Chat
+    interval: 1m
+    rules:
+      - uid: outbox-backlog-alert
+        title: Outbox backlog > 50
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: chat_outbox_backlog_count > 50
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            type: math
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 50
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                name: Expression
+                type: __expr__
+                uid: __expr__
+              expression: $A
+              hide: false
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: math
+      - uid: outbox-age-alert
+        title: Outbox oldest event > 10s
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: chat_outbox_oldest_event_age_seconds > 10
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            type: math
+            datasourceUid: __expr__
+            model:
+              expression: $A
+              refId: C
+              type: math
+      - uid: celery-realtime-age
+        title: Celery Realtime Queue Age > 1s
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: celery_queue_oldest_task_age_seconds{queue="chat.realtime"} > 1
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            type: math
+            datasourceUid: __expr__
+            model:
+              expression: $A
+              refId: C
+              type: math
+      - uid: pg-connections-high
+        title: Postgres Active Connections > 80%
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: sum(pg_stat_activity_count{state="active"}) / sum(pg_settings_max_connections) > 0.8
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            type: math
+            datasourceUid: __expr__
+            model:
+              expression: $A
+              refId: C
+              type: math
+      - uid: outbox-deadletter
+        title: Outbox Failed Attempts > 3
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              expr: chat_outbox_failed_attempts_count > 3
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            type: math
+            datasourceUid: __expr__
+            model:
+              expression: $A
+              refId: C
+              type: math
