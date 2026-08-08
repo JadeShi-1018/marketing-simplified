@@ -2763,9 +2763,10 @@ const SpreadsheetGrid = forwardRef<SpreadsheetGridHandle, SpreadsheetGridProps>(
       const cellData = cells.get(key);
       if (!cellData) return '';
       const rawInput = cellData.rawInput || '';
-      // Sparkline cells render as a chart, not text — keep their JSON payload
-      // out of the displayed/copied value.
-      if (isSparklineRawInput(rawInput)) return '';
+      // Sparkline cells render as a chart (SparklineCell wins in the render path),
+      // so this value is only used for copy/paste and CSV export. Return the
+      // formula itself — never the backend JSON payload, and not a blank.
+      if (isSparklineRawInput(rawInput)) return rawInput.trim();
       const numberFormat = getCellFormat(row, col).numberFormat;
       const formatNum = (v: number | string) =>
         formatNumericForDisplay(Number(v), numberFormat);

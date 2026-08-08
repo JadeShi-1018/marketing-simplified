@@ -6,14 +6,25 @@ charts. This backend export writes the same cell values plus a native
 file opens in Excel with a real, editable chart.
 """
 import io
+import re
 from typing import Any, List, Optional
 
 from openpyxl import Workbook
 from openpyxl.chart import LineChart, Reference
 from openpyxl.utils import get_column_letter
+from rest_framework.exceptions import ValidationError
 
 from .models import Cell, ComputedCellType
 from .sparkline import is_sparkline, parse_sparkline
+
+# Excel forbids these characters in a worksheet title, and caps it at 31 chars.
+_INVALID_TITLE_CHARS = re.compile(r'[\\/?*\[\]:]')
+
+
+def _safe_sheet_title(name: Optional[str]) -> str:
+    """A worksheet title Excel/openpyxl will accept for any user-entered name."""
+    cleaned = _INVALID_TITLE_CHARS.sub(' ', (name or '').strip())
+    return cleaned[:31] or 'Sheet1'
 
 
 def _cell_export_value(cell: Cell) -> Optional[Any]:
@@ -35,7 +46,7 @@ def build_sheet_workbook(sheet) -> bytes:
     """Serialize a sheet to .xlsx bytes: cell values + native charts for sparklines."""
     workbook = Workbook()
     worksheet = workbook.active
-    worksheet.title = (sheet.name or 'Sheet1')[:31]
+    worksheet.title = _safe_sheet_title(sheet.name)
 
     cells = (
         Cell.objects.filter(
@@ -60,7 +71,7 @@ def build_sheet_workbook(sheet) -> bytes:
     for cell in sparkline_cells:
         try:
             spec = parse_sparkline(cell.raw_input)
-        except Exception:
+        except ValidationError:
             continue  # a bad spec exports as an empty cell, not a crash
         (r0, c0), (r1, c1) = spec.start, spec.end
         chart = LineChart()

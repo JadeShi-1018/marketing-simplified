@@ -14,7 +14,8 @@ const PADDING = 2;
 
 /**
  * Renders a backend-resolved sparkline series as a compact, axis-less line
- * inside a spreadsheet cell (MED-295). Gaps (null) are skipped via connectNulls.
+ * inside a spreadsheet cell (MED-295). `connectNulls` bridges the line across
+ * gaps (null) so a missing point doesn't break the trend line.
  */
 export default function SparklineCell({ payload, width, height }: SparklineCellProps) {
   const hasData = payload.series.some((v) => v != null);

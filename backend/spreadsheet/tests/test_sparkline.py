@@ -84,6 +84,13 @@ class TestParseSparkline:
         spec = parse_sparkline('=SPARKLINE(A1:A10, "line", "notacolor")')
         assert spec.color is None       # lenient: bad color dropped, no raise
 
+    def test_reversed_range_is_normalized(self):
+        # A range written bottom-up normalizes to top-left:bottom-right.
+        spec = parse_sparkline('=SPARKLINE(A10:A1)')
+        assert spec.range == 'A1:A10'
+        assert spec.start == (0, 0)
+        assert spec.end == (9, 0)
+
     def test_rejects_oversized_column_range(self):
         # A range far bigger than a cell chart can show fails fast, not resolves.
         with pytest.raises(ValidationError):

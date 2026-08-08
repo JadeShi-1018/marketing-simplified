@@ -4,6 +4,7 @@ API views for spreadsheet operations
 Handles CRUD operations for spreadsheets, sheets, rows, columns, and cells
 """
 import logging
+import re
 import time
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -1451,6 +1452,8 @@ class SheetXlsxExportView(APIView):
             content,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
-        filename = f'{(sheet.name or "sheet")}.xlsx'
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        # sheet.name is user-controlled: strip quotes/backslashes and control
+        # chars so it can't break or inject into the Content-Disposition header.
+        safe_name = re.sub(r'["\\\r\n]|[\x00-\x1f]', '', (sheet.name or 'sheet')).strip() or 'sheet'
+        response['Content-Disposition'] = f'attachment; filename="{safe_name}.xlsx"'
         return response

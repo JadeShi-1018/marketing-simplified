@@ -13,7 +13,9 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from rest_framework.exceptions import ValidationError
 
-from .formula_engine import FormulaError, reference_to_indexes
+from .formula_engine import (
+    FormulaError, _column_index_to_label, reference_to_indexes,
+)
 from .models import Cell, ComputedCellType
 
 _SPARKLINE_RE = re.compile(r'^\s*=SPARKLINE\((?P<args>.*)\)\s*$', re.IGNORECASE | re.DOTALL)
@@ -103,9 +105,15 @@ def parse_sparkline(raw_input: Optional[str]) -> SparklineSpec:
             {'sparkline': f'range is too large ({point_count} cells); max {MAX_SPARKLINE_POINTS}.'}
         )
 
+    # Normalize the range string from the sorted coordinates so it always reads
+    # top-left:bottom-right (e.g. "A10:A1" -> "A1:A10"), matching start/end and
+    # the resolved series order.
+    normalized_range = (
+        f'{_column_index_to_label(c0)}{r0 + 1}:{_column_index_to_label(c1)}{r1 + 1}'
+    )
     return SparklineSpec(
         type=chart_type,
-        range=f'{start_ref.strip().upper()}:{end_ref.strip().upper()}',
+        range=normalized_range,
         color=color,
         start=(r0, c0),
         end=(r1, c1),

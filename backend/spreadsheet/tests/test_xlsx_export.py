@@ -81,6 +81,31 @@ class TestXlsxExport(TestCase):
         ]
         assert any('3CCED7' in str(f) for f in fills)
 
+    def test_export_survives_illegal_sheet_title(self):
+        # A sheet named with Excel-illegal chars must not crash the export.
+        self.sheet.name = 'Q1/Q2:[2026]*?'
+        self.sheet.save()
+        wb = self._load()  # would raise before the title is sanitized
+        title = wb.active.title
+        assert not any(ch in title for ch in '\\/?*[]:')
+        assert len(title) <= 31
+
+    def test_export_endpoint_sanitizes_content_disposition(self):
+        # A quote/newline in the sheet name must not break or inject the header.
+        self.sheet.name = 'evil"\r\nname'
+        self.sheet.save()
+        client = APIClient()
+        client.force_authenticate(user=self.user)
+        url = (
+            f'/api/spreadsheet/spreadsheets/{self.spreadsheet.slug}/'
+            f'sheets/{self.sheet.id}/export.xlsx'
+        )
+        response = client.get(url)
+        assert response.status_code == 200
+        disposition = response['Content-Disposition']
+        assert '"' not in disposition.replace('filename="', '').rstrip('"')
+        assert '\r' not in disposition and '\n' not in disposition
+
     def test_export_endpoint_returns_xlsx_with_chart(self):
         client = APIClient()
         client.force_authenticate(user=self.user)
