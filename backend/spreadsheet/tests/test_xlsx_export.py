@@ -57,6 +57,30 @@ class TestXlsxExport(TestCase):
         ws = self._load().active
         assert ws['E1'].value is None  # the JSON payload is never written as a value
 
+    def test_chart_is_linked_to_the_source_range(self):
+        # The native chart must reference the real cells (A1:A5), not embed a snapshot.
+        ws = self._load().active
+        series = ws._charts[0].series
+        assert len(series) == 1
+        ref = series[0].val.numRef.f  # e.g. "Sheet1!$A$1:$A$5"
+        assert '$A$1:$A$5' in ref
+
+    def test_chart_series_carries_spec_color(self):
+        # A colored spec paints the native series line (openpyxl stores RRGGBB, no '#').
+        Cell.objects.create(
+            sheet=self.sheet, row=self.rows[1], column=self.cols[4],
+            value_type=CellValueType.FORMULA,
+            raw_input='=SPARKLINE(A1:A5, "line", "#3CCED7")',
+            formula_value='=SPARKLINE(A1:A5, "line", "#3CCED7")',
+        )
+        ws = self._load().active
+        fills = [
+            c.series[0].graphicalProperties.line.solidFill
+            for c in ws._charts
+            if c.series and c.series[0].graphicalProperties.line.solidFill is not None
+        ]
+        assert any('3CCED7' in str(f) for f in fills)
+
     def test_export_endpoint_returns_xlsx_with_chart(self):
         client = APIClient()
         client.force_authenticate(user=self.user)

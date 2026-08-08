@@ -72,6 +72,9 @@ def build_sheet_workbook(sheet) -> bytes:
         )
         # A single-row range lays its series out across a row.
         chart.add_data(data, from_rows=(r0 == r1))
+        # Carry the spec color onto the native series line (openpyxl wants RRGGBB).
+        if spec.color and chart.series:
+            chart.series[0].graphicalProperties.line.solidFill = spec.color.lstrip('#')
         anchor = f'{get_column_letter(cell.column.position + 1)}{cell.row.position + 1}'
         worksheet.add_chart(chart, anchor)
 

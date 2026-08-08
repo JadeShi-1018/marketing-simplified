@@ -19,6 +19,9 @@ from .models import Cell, ComputedCellType
 _SPARKLINE_RE = re.compile(r'^\s*=SPARKLINE\((?P<args>.*)\)\s*$', re.IGNORECASE | re.DOTALL)
 _HEX_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
 _ALLOWED_TYPES = frozenset({'line'})  # v1: line only
+# A cell-sized chart can't meaningfully show more than a handful of points; cap the
+# range so a typo like A1:A100000 fails fast instead of resolving a huge series.
+MAX_SPARKLINE_POINTS = 1000
 
 
 class SparklineSpec(NamedTuple):
@@ -93,6 +96,12 @@ def parse_sparkline(raw_input: Optional[str]) -> SparklineSpec:
     c0, c1 = sorted((start_rc[1], end_rc[1]))
     if r0 != r1 and c0 != c1:
         raise ValidationError({'sparkline': 'range must be a single row or a single column (1-D).'})
+
+    point_count = (r1 - r0 + 1) * (c1 - c0 + 1)
+    if point_count > MAX_SPARKLINE_POINTS:
+        raise ValidationError(
+            {'sparkline': f'range is too large ({point_count} cells); max {MAX_SPARKLINE_POINTS}.'}
+        )
 
     return SparklineSpec(
         type=chart_type,

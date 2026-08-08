@@ -13,9 +13,10 @@ from rest_framework.exceptions import ValidationError
 from spreadsheet.models import (
     Cell, CellDependency, CellValueType, ComputedCellType, SheetColumn, SheetRow,
 )
-from spreadsheet.services import CellService
+from spreadsheet.services import CellService, SheetService
 from spreadsheet.sparkline import (
-    compute_sparkline, is_sparkline, parse_sparkline, resolve_series,
+    MAX_SPARKLINE_POINTS, compute_sparkline, is_sparkline, parse_sparkline,
+    resolve_series,
 )
 from spreadsheet.tests.test_services import (
     create_test_organization, create_test_project, create_test_sheet,
@@ -82,6 +83,22 @@ class TestParseSparkline:
     def test_bad_color_is_ignored_not_rejected(self):
         spec = parse_sparkline('=SPARKLINE(A1:A10, "line", "notacolor")')
         assert spec.color is None       # lenient: bad color dropped, no raise
+
+    def test_rejects_oversized_column_range(self):
+        # A range far bigger than a cell chart can show fails fast, not resolves.
+        with pytest.raises(ValidationError):
+            parse_sparkline('=SPARKLINE(A1:A100000)')
+
+    def test_rejects_oversized_row_range(self):
+        with pytest.raises(ValidationError):
+            parse_sparkline('=SPARKLINE(A1:ZZZ1)')
+
+    def test_allows_range_at_the_cap(self):
+        # Exactly MAX_SPARKLINE_POINTS is fine; one more is rejected.
+        spec = parse_sparkline(f'=SPARKLINE(A1:A{MAX_SPARKLINE_POINTS})')
+        assert spec.end == (MAX_SPARKLINE_POINTS - 1, 0)
+        with pytest.raises(ValidationError):
+            parse_sparkline(f'=SPARKLINE(A1:A{MAX_SPARKLINE_POINTS + 1})')
 
 
 class TestResolveSeries(TestCase):
@@ -208,3 +225,56 @@ class TestSparklineServiceIntegration(TestCase):
         bad.refresh_from_db()
         assert bad.computed_type == ComputedCellType.ERROR
         assert bad.error_code == '#ERROR!'
+
+
+class TestSparklineStructuralEdits(TestCase):
+    """Row insert/delete must rewrite the SPARKLINE range AND recompute its series.
+
+    This proves the reference-updating machinery (formula_rewrite ->
+    _update_dependencies -> _recalculate_formula_cells) keeps a chart pointing at
+    the right data when the source range moves or resizes. SPARKLINE rides the same
+    path as any '=' formula, so no sparkline-specific rewrite code is needed.
+    """
+
+    def setUp(self):
+        self.user = create_test_user()
+        self.org = create_test_organization()
+        self.project = create_test_project(self.org, owner=self.user)
+        self.spreadsheet = create_test_spreadsheet(self.project)
+        self.sheet = create_test_sheet(self.spreadsheet)
+        self.rows = {i: SheetRow.objects.create(sheet=self.sheet, position=i) for i in range(5)}
+        self.cols = {
+            i: SheetColumn.objects.create(sheet=self.sheet, position=i, name=chr(ord('A') + i))
+            for i in range(5)
+        }
+        for r, v in enumerate([10, 20, 30, 40, 50]):
+            Cell.objects.create(
+                sheet=self.sheet, row=self.rows[r], column=self.cols[0],
+                value_type=CellValueType.NUMBER, number_value=Decimal(v),
+                computed_type=ComputedCellType.NUMBER, computed_number=Decimal(v),
+            )
+        self.spark = Cell.objects.create(
+            sheet=self.sheet, row=self.rows[0], column=self.cols[4],
+            value_type=CellValueType.FORMULA,
+            raw_input='=SPARKLINE(A1:A5)', formula_value='=SPARKLINE(A1:A5)',
+        )
+        CellService._update_dependencies(self.spark)
+        CellService._recalculate_formula_cells([self.spark])
+
+    def _spark_payload(self):
+        self.spark.refresh_from_db()
+        return json.loads(self.spark.computed_string)
+
+    def test_insert_row_above_shifts_range_and_preserves_series(self):
+        # Insert a row at the top: A1:A5 -> A2:A6, still covering the same data.
+        SheetService.insert_rows(self.sheet, position=0, count=1)
+        self.spark.refresh_from_db()
+        assert self.spark.raw_input == '=SPARKLINE(A2:A6)'
+        assert self._spark_payload()['series'] == [10.0, 20.0, 30.0, 40.0, 50.0]
+
+    def test_delete_interior_row_shrinks_range_and_drops_value(self):
+        # Delete the 3rd row (A3=30): range shrinks A1:A5 -> A1:A4, 30 falls out.
+        SheetService.delete_rows(self.sheet, position=2, count=1)
+        self.spark.refresh_from_db()
+        assert self.spark.raw_input == '=SPARKLINE(A1:A4)'
+        assert self._spark_payload()['series'] == [10.0, 20.0, 40.0, 50.0]
