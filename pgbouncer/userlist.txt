@@ -1,8 +1,0 @@
-;; PgBouncer user list
-;; Format: "username" "password"
-;; Passwords can be plaintext, md5, or scram-sha-256 hashed.
-;; For development, plaintext is acceptable. For production, use hashed passwords.
-;;
-;; The username/password must match the PostgreSQL role credentials.
-;; Update these values to match your POSTGRES_USER / POSTGRES_PASSWORD.
-"mediajira_user" "jared520"

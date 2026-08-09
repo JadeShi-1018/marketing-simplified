@@ -13,21 +13,49 @@ services:
       retries: 5
 
   # PgBouncer connection pooler — sits between Django/Celery and PostgreSQL.
-  # Transaction-pooling mode returns connections at transaction end, which
-  # matches Django's default CONN_MAX_AGE=0.
+  # Session pooling is required because tenant isolation uses session-level
+  # SET search_path. Django closes client connections after each request
+  # (CONN_MAX_AGE=0), so server sessions still return to this bounded pool.
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:v1.25.2-p0
     container_name: pgbouncer-dev
     restart: always
     ports:
-      - "6432:6432"
+      - "6432:5432"
+    env_file:
+      - .env
+    environment:
+      - DB_HOST=${PGBOUNCER_DB_HOST:-postgres-host}
+      - DB_PORT=${PGBOUNCER_DB_PORT:-5432}
+      - DB_USER=${POSTGRES_USER:-postgres}
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-}
+      # Wildcard keeps Django's postgres/test database management connections valid.
+      - DB_NAME=*
+      - POOL_MODE=session
+      - SERVER_RESET_QUERY=DISCARD ALL
+      - MAX_CLIENT_CONN=300
+      - DEFAULT_POOL_SIZE=25
+      - MIN_POOL_SIZE=5
+      - RESERVE_POOL_SIZE=5
+      - RESERVE_POOL_TIMEOUT=3
+      - SERVER_IDLE_TIMEOUT=60
+      - ADMIN_USERS=${POSTGRES_USER:-postgres}
+      - STATS_USERS=${POSTGRES_USER:-postgres}
+    # Docker Desktop exposes an unreachable IPv6 host-gateway address on some
+    # older Macs. Resolve the upstream hostname to IPv4 once at startup so
+    # PgBouncer can fill its session pool without repeated 15-second retries.
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        resolved_host="$$(getent ahostsv4 "$$DB_HOST" | awk 'NR == 1 { print $$1 }')"
+        test -n "$$resolved_host"
+        export DB_HOST="$$resolved_host"
+        exec /entrypoint.sh /usr/bin/pgbouncer /etc/pgbouncer/pgbouncer.ini
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    volumes:
-      - ./pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
-      - ./pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+      - "postgres-host:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 6432"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-mediajira_db}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -86,8 +114,8 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=host.docker.internal
-      - DB_PORT=6432
+      - DB_HOST=pgbouncer
+      - POSTGRES_PORT=5432
       - PG_APPLICATION_NAME=daphne_web
       - DEBUG=True
       # - SONAR_USER=${SONAR_USER}
@@ -179,8 +207,8 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=host.docker.internal
-      - DB_PORT=6432
+      - DB_HOST=pgbouncer
+      - POSTGRES_PORT=5432
       - PG_APPLICATION_NAME=celery_default
       - DEBUG=True
     extra_hosts:
@@ -206,8 +234,8 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=host.docker.internal
-      - DB_PORT=6432
+      - DB_HOST=pgbouncer
+      - POSTGRES_PORT=5432
       - PG_APPLICATION_NAME=celery_chat_realtime
       - DEBUG=True
     extra_hosts:
@@ -231,8 +259,8 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=host.docker.internal
-      - DB_PORT=6432
+      - DB_HOST=pgbouncer
+      - POSTGRES_PORT=5432
       - PG_APPLICATION_NAME=celery_chat_background
       - DEBUG=True
     extra_hosts:
@@ -255,8 +283,8 @@ services:
     env_file:
       - .env
     environment:
-      - DB_HOST=host.docker.internal
-      - DB_PORT=6432
+      - DB_HOST=pgbouncer
+      - POSTGRES_PORT=5432
       - PG_APPLICATION_NAME=celery_beat_outbox
       - DEBUG=True
     extra_hosts:
