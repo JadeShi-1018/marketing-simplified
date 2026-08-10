@@ -3,6 +3,9 @@ import json
 import asyncio
 import uuid
 import weakref
+from collections import OrderedDict
+from contextlib import suppress
+from datetime import timedelta
 from functools import wraps
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -110,7 +113,25 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.user_group_name,
             self.channel_name
         )
-        
+
+        # Chat groups join here too, before accept, for the same reason the
+        # personal group does: from the moment a socket is accepted a sender
+        # may publish to a chat this user is in, and anything published before
+        # the join simply does not reach them. Doing it after accept left a
+        # window where the socket was connected but unreachable, which is why
+        # a burst of senders lost deliveries to peers that were still joining.
+        #
+        # The cost is one indexed query plus one Redis add per chat, paid
+        # inside the handshake. That is what --websocket_connect_timeout covers.
+        self.joined_chat_groups = set()
+        try:
+            await self.sync_chat_groups()
+        except Exception:
+            # Already logged. Refuse the connection rather than accept a socket
+            # that cannot receive the chats it is entitled to.
+            await self.close(code=1011)
+            return
+
         await self.accept()
         logger.info(
             "[WebSocket] User %s (%s) connected; initializing chat groups",
@@ -118,7 +139,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.user.username,
         )
 
-        self.joined_chat_groups = set()
         self.presence_registered = False
         # Return from connect immediately so channel-layer events can be
         # consumed. Presence snapshots and queued-message recovery perform ORM
@@ -131,12 +151,10 @@ class ChatConsumer(AsyncWebsocketConsumer):
     async def initialize_after_accept(self):
         try:
             async with connection_init_semaphore():
-                # A socket is not delivery-ready until it has joined every chat
-                # group it is entitled to. Publishing presence before this point
-                # lets realtime fan-out mark a recipient delivered even though
-                # the group cannot reach that connection yet.
-                await self.sync_chat_groups()
-
+                # Chat groups are already joined in connect(), before accept, so
+                # this socket is reachable by the time anything can publish to
+                # it. What remains here is the ORM work that would have
+                # serialised the handshake.
                 connection_count, became_online, presence_version = await sync_to_async(
                     OnlineStatusService.connection_opened,
                     thread_sensitive=False,
@@ -148,6 +166,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 # snapshot, so this ordering prevents recovery frames from
                 # starving fresh realtime traffic.
                 await self.send_queued_messages()
+                await self.replay_recently_delivered()
 
                 presence_recipient_ids = await database_sync_to_async(
                     self.get_presence_recipient_ids,
@@ -176,6 +195,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 '[WebSocket] Post-accept initialization failed for user %s',
                 self.user_id,
             )
+            # Close rather than serve a half-initialised socket. The client
+            # reconnects and retries from a clean state; leaving it open makes
+            # it look ready to a sender while it may not be reachable.
+            with suppress(Exception):
+                await self.close(code=1011)
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection"""
@@ -492,10 +516,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
                     break
 
                 for claimed in claimed_messages:
-                    await self.send(text_data=json.dumps({
-                        'type': 'chat_message',
-                        'message': claimed['message'],
-                    }))
+                    # Through the same single writer as realtime delivery, so a
+                    # message this socket already received is not repeated. It
+                    # still counts as sent: the row is ours either way and must
+                    # not be handed back.
+                    await self.send_chat_message_once(claimed['message'])
                     sent_message_ids.append(claimed['message_id'])
             except Exception as exc:
                 logger.error("Error sending queued messages: %s", exc)
@@ -527,17 +552,90 @@ class ChatConsumer(AsyncWebsocketConsumer):
             total_sent,
             total_released,
         )
-    
+
+    async def replay_recently_delivered(self):
+        """Re-send messages recorded as delivered, in case they never arrived.
+
+        Delivery is recorded when a message is handed to the channel layer, not
+        when a socket writes it, and channels_redis deletes anything a
+        connection has not read within its expiry — no error, no log, and the
+        row still says delivered, so ``send_queued_messages`` will never look at
+        it again. This closes that window on reconnect, and with it every other
+        way a publish can be accepted and then lost.
+
+        Deliberately unclaimed and read-only: these rows are already delivered,
+        so there is no state transition to win, and re-running this is harmless.
+        The socket's own writer drops whatever this connection already sent, and
+        the client drops the rest by message id.
+        """
+        try:
+            payloads = await database_sync_to_async(
+                self.get_recently_delivered_messages,
+                thread_sensitive=False,
+            )()
+        except Exception:
+            # A reconnect that cannot replay is still a usable reconnect.
+            logger.exception(
+                'Delivered-message replay failed for user %s', self.user_id
+            )
+            return
+
+        replayed = 0
+        for payload in payloads:
+            if await self.send_chat_message_once(payload):
+                replayed += 1
+
+        if replayed:
+            logger.info(
+                "Delivered-message replay: user=%s candidates=%s resent=%s",
+                self.user_id,
+                len(payloads),
+                replayed,
+            )
+
+
     # Channel layer handlers (called by group_send)
     
+    # How many recently-sent message ids to remember per connection when
+    # suppressing repeats. Large enough to cover the gap between a realtime
+    # publish and the delivery task that follows it, small enough to stay cheap
+    # on a long-lived socket.
+    RECENT_MESSAGE_MEMORY = 512
+
     async def chat_message(self, event):
         """Send chat message to WebSocket"""
         if str(event.get('exclude_user_id', '')) == str(self.user.id):
             return
+
+        await self.send_chat_message_once(event['message'])
+
+    async def send_chat_message_once(self, message_payload):
+        """Write one chat message to this socket, at most once.
+
+        Three paths can deliver the same message here: the realtime fan-out,
+        the offline delivery task and reconnect recovery. They coordinate
+        through the sent -> delivered claim, but a socket can be reachable
+        without having been claimed — it joins its chat groups before it is
+        registered online — and the delivery task then sends it again. Every
+        write goes through here so a race between those paths cannot reach the
+        client, whichever one wrote first.
+        """
+        message_id = (message_payload or {}).get('id')
+        if message_id is not None:
+            recent = getattr(self, 'recent_message_ids', None)
+            if recent is None:
+                recent = self.recent_message_ids = OrderedDict()
+            if message_id in recent:
+                return False
+            recent[message_id] = None
+            while len(recent) > self.RECENT_MESSAGE_MEMORY:
+                recent.popitem(last=False)
+
         await self.send(text_data=json.dumps({
             'type': 'chat_message',
-            'message': event['message']
+            'message': message_payload,
         }))
+        return True
     
     async def message_status_update(self, event):
         """Send message status update to WebSocket"""
@@ -706,15 +804,33 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 self.user_id, len(allowed - current), len(current - allowed),
             )
         except Exception:
-            # A failure here must not drop the connection; the personal group
-            # still delivers, and the next sync or reconnect repairs it.
+            # Deliberately not swallowed. While chat groups carry the messages,
+            # a socket that failed to join receives nothing, and the caller goes
+            # on to mark it online — so the fan-out claims it as a recipient and
+            # marks the message delivered to someone who cannot be reached.
+            # Losing the connection is recoverable; a connection that looks
+            # healthy and silently drops messages is not.
             logger.exception(
                 "[WebSocket] Failed to sync chat groups for user %s", self.user_id
             )
+            raise
 
     async def chat_membership_changed(self, event):
         """Someone's membership changed — re-derive this connection's groups."""
-        await self.sync_chat_groups()
+        try:
+            await self.sync_chat_groups()
+        except Exception:
+            # The re-sync is how a removal reaches a live socket. If it cannot
+            # be completed we do not know which groups this connection should
+            # still hold, and the failure mode is a user reading a channel they
+            # were removed from. Drop the connection and let it re-derive
+            # everything from the database on reconnect.
+            logger.exception(
+                '[WebSocket] Membership re-sync failed for user %s; closing',
+                self.user_id,
+            )
+            with suppress(Exception):
+                await self.close(code=1011)
 
     async def _broadcast_presence_to_chat_groups(self, is_online: bool, version=None):
         """Announce presence once per shared chat rather than once per peer.
@@ -854,6 +970,31 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 release_unpublished_recipients(status.message_id, [self.user.id])
                 raise
         return claimed_messages
+
+    @tenant_db_method
+    def get_recently_delivered_messages(self):
+        """Messages marked delivered inside the window a publish can be lost in."""
+        window = int(getattr(settings, 'CHAT_RECONNECT_REPLAY_SECONDS', 300))
+        limit = int(getattr(settings, 'CHAT_RECONNECT_REPLAY_MAX_MESSAGES', 100))
+        if window <= 0 or limit <= 0:
+            return []
+
+        statuses = MessageStatus.objects.filter(
+            user=self.user,
+            status='delivered',
+            delivered_at__gte=timezone.now() - timedelta(seconds=window),
+        ).select_related(
+            'message',
+            'message__sender',
+            'message__chat',
+            'message__reply_to',
+            'message__reply_to__sender',
+        ).prefetch_related('message__attachments').order_by(
+            'message__created_at',
+            'message_id',
+        )[:limit]
+
+        return [build_realtime_message_payload(status.message) for status in statuses]
 
     def _get_queued_statuses(self):
         return list(MessageStatus.objects.filter(

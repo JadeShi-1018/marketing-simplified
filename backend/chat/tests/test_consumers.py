@@ -3,11 +3,14 @@ import logging
 import json
 import pytest
 from contextlib import suppress
+from datetime import timedelta
 from unittest.mock import patch
 from channels.testing import WebsocketCommunicator
 from channels.routing import URLRouter
 from channels.layers import channel_layers
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from core.models import Project, Organization, Team, TeamMember, ProjectMember
@@ -352,6 +355,41 @@ class TestChatConsumer:
             return ChatParticipant.objects.create(chat=chat, user=user, is_active=True)
         return await create()
 
+    async def test_failed_chat_group_join_closes_the_socket(self, db, settings):
+        """A socket that could not join its chat groups must be refused.
+
+        While chat groups carry the messages, a connection that failed to join
+        receives nothing — but it would go on to be marked online, so the
+        fan-out claims it and marks messages delivered to somewhere
+        unreachable. Refusing the connection is recoverable; a healthy-looking
+        socket that silently drops messages is not.
+        """
+        settings.CHAT_CHANNEL_GROUPS_ENABLED = True
+
+        user = await self._create_user('joinfail', 'joinfail@example.com')
+        org = await self._create_organization('Join Fail Org')
+        project = await self._create_project(org, 'Join Fail Project')
+        chat = await self._create_chat(project, ChatType.GROUP)
+        await self._add_chat_participant(chat, user)
+
+        token = str(AccessToken.for_user(user))
+        application = JWTAuthMiddleware(URLRouter(websocket_urlpatterns))
+        communicator = WebsocketCommunicator(application, f'/ws/chat/{user.id}/?token={token}')
+        try:
+            with patch(
+                'chat.consumers.get_joinable_chat_ids',
+                side_effect=RuntimeError('redis unavailable'),
+            ):
+                # The join happens before accept, so a failure refuses the
+                # handshake outright rather than accepting a socket that cannot
+                # receive the chats it is entitled to.
+                connected, _ = await communicator.connect()
+                assert not connected, (
+                    'a socket that failed to join its chat groups was still accepted'
+                )
+        finally:
+            await _disconnect_communicators(communicator)
+
     async def test_chat_group_access_is_revoked_on_removal(self, db, settings):
         """A socket that loses channel access must stop receiving it immediately.
 
@@ -571,6 +609,42 @@ class TestChatConsumerSync:
         assert payload['is_forwarded']
         assert payload['forwarded_from'] is not None
         assert payload['forwarded_from']['sender_display'] == sender.username
+
+    def test_recently_delivered_replay_covers_the_expiry_window(self):
+        """A message marked delivered is replayed until it falls out of the window.
+
+        Delivery is recorded when a message is handed to the channel layer, so a
+        publish the channel layer later discards leaves a row saying delivered
+        that no other recovery path will look at again.
+        """
+        sender = User.objects.create_user(
+            username='sender3', email='sender3@example.com', password='testpass123'
+        )
+        ChatParticipant.objects.create(chat=self.chat, user=sender, is_active=True)
+        consumer = ChatConsumer()
+        consumer.user = self.user
+        window = settings.CHAT_RECONNECT_REPLAY_SECONDS
+
+        recent = Message.objects.create(chat=self.chat, sender=sender, content='recent')
+        MessageStatus.objects.create(
+            message=recent,
+            user=self.user,
+            status='delivered',
+            delivered_at=timezone.now() - timedelta(seconds=window // 2),
+        )
+        stale = Message.objects.create(chat=self.chat, sender=sender, content='stale')
+        MessageStatus.objects.create(
+            message=stale,
+            user=self.user,
+            status='delivered',
+            delivered_at=timezone.now() - timedelta(seconds=window + 60),
+        )
+
+        contents = [
+            payload['content']
+            for payload in consumer.get_recently_delivered_messages()
+        ]
+        assert contents == ['recent']
 
     def test_get_queued_messages_includes_attachment_fields_for_plain_message(self):
         """Queued payload should keep attachment fields even for plain text messages."""

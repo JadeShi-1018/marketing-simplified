@@ -182,15 +182,40 @@ CHANNEL_LAYERS = {
             #   10,000       5,533          2,568
             #   50,000           0          4,161-4,503
             #
-            # Queued messages expire after 60s, so this bounds memory rather
-            # than growing without limit — Redis peaked at 17 MB across the
-            # 50,000 runs, against 10 MB at 10,000.
+            # Capacity bounds memory because queued messages also expire; see
+            # the expiry note below. Redis peaked at 17 MB across the 50,000
+            # runs, against 10 MB at 10,000.
             #
             # This is a safety valve, not the fix. The pressure comes from
             # fanning one message out as one publish per recipient; a
             # channel-level group would make it one publish and drop the queue
             # depth by two orders of magnitude.
             "capacity": config('CHANNEL_LAYER_CAPACITY', default=50000, cast=int),
+            # The second silent drop, and the one capacity does not cover.
+            # channels_redis expires queued messages, and every group_send
+            # sweeps each recipient channel with
+            # ZREMRANGEBYSCORE(key, 0, now - expiry) before writing. Anything a
+            # connection has not read within the window is deleted with no log
+            # line and no error — unlike a capacity drop, which at least logs.
+            #
+            # The default is 60s. Measured with 100 connections in one channel,
+            # driving ~1,700 deliveries/s against a ceiling of roughly 1,000/s
+            # on a single ASGI process, so the backlog grew past the window:
+            #
+            #   demand      p95 delivery    deliveries lost
+            #   ~1,550/s    33.5s            0 of 99,000
+            #   ~1,700/s    60.0s (pinned)   ~12,000 of 148,500 (~8%)
+            #
+            # The loss was one contiguous block of send order per connection —
+            # exactly the interval during which the backlog exceeded 60s — and
+            # p95 sat flat on the expiry value. Nothing else registered it:
+            # every message was committed, every outbox event published, every
+            # socket stayed open, and MessageStatus recorded them delivered.
+            #
+            # 300s is not headroom for a sustainable overload; a backlog that
+            # keeps growing reaches any window eventually. It buys time for a
+            # burst or a slow consumer to drain before delivery turns lossy.
+            "expiry": config('CHANNEL_LAYER_EXPIRY', default=300, cast=int),
         },
     },
 }
@@ -490,18 +515,31 @@ CHAT_FANOUT_CONCURRENCY = config('CHAT_FANOUT_CONCURRENCY', default=25, cast=int
 # (ChatService.invalidate_presence_recipients_for_chat -> chat_membership_changed
 # -> the consumer re-syncing its groups) has been exercised.
 #
-# Known property, not a bug: with per-recipient fan-out, "who we claimed" and
-# "who received it" are the same set. A group publish reaches whoever is in the
-# group at that moment, which can include a connection that arrived after the
-# claim — its status row is still 'sent', so the delivery task sends it a
-# second time. Measured at 2 duplicates in 10,000 deliveries; the client
-# deduplicates by message id, so it is invisible, but it is the trade this
-# design makes.
+# Duplicate delivery is handled, not tolerated. A group publish reaches whoever
+# is in the group at that moment, which can include a connection that arrived
+# after the claim — its status row is still 'sent', so the delivery task sends
+# it again. Every write to a socket now goes through one method that drops a
+# message id it has already sent, so a race between the realtime fan-out, the
+# delivery task and reconnect recovery cannot reach the client.
 #
-# Measured at 100 concurrent users in one channel, against the same run with
-# the flag off: Redis zadd 40,682 -> publish 3,554, deliveries 5,549 -> 10,000,
-# delivery p95 21.9s -> 16.1s.
-CHAT_CHANNEL_GROUPS_ENABLED = config('CHAT_CHANNEL_GROUPS_ENABLED', default=True, cast=bool)
+# Measured over three consecutive 100-user runs on a barrier-enforced load test
+# (chat_ready_after_barrier = 0, meaning every client was ready before any of
+# them wrote):
+#
+#   flag on   9,900/9,900 delivered, 0 duplicates, delivery p95 4.69-5.10s
+#   flag off  9,900/9,900 delivered, 0 duplicates, delivery p95 9.40s
+#
+# Earlier runs of this flag looked non-deterministic, at 6,983-9,900 delivered.
+# That was the load test rather than the feature: its warm-up defaulted to zero,
+# so the first ready client sent while later clients were still connecting, and
+# a group publish cannot reach a socket that does not exist yet. Per-recipient
+# fan-out hid it because an absent user is simply not claimed and picks the
+# message up on connect.
+#
+# Still off by default pending a decision, not pending a fix: turning it on is
+# a behaviour change on the delivery path and the revocation route above should
+# be exercised in a preview environment first.
+CHAT_CHANNEL_GROUPS_ENABLED = config('CHAT_CHANNEL_GROUPS_ENABLED', default=False, cast=bool)
 
 # Bound independent post-accept ORM work. One thread serialized 100 sockets;
 # an unbounded executor would instead exhaust PostgreSQL connections.
@@ -516,6 +554,30 @@ CHAT_CONNECTION_INIT_CONCURRENCY = config(
 CHAT_RECONNECT_RECOVERY_MAX_MESSAGES = config(
     'CHAT_RECONNECT_RECOVERY_MAX_MESSAGES',
     default=500,
+    cast=int,
+)
+
+# That recovery only finds rows still marked 'sent', and a message is marked
+# delivered when it is handed to the channel layer rather than when a socket
+# receives it. The two are not the same: a queued message the connection does
+# not read within the channel layer's expiry is deleted silently, and its row
+# already says delivered, so nothing ever resends it.
+#
+# So a reconnect also replays what was marked delivered recently. Anything the
+# client already has is dropped on arrival — the frontend keys messages by id —
+# which makes replaying more than necessary the cheap side of this trade.
+#
+# Keep the window at or above the channel layer expiry: it is the interval in
+# which a publish can be discarded after being recorded as delivered. Below it,
+# the hole reopens for the difference.
+CHAT_RECONNECT_REPLAY_SECONDS = config(
+    'CHAT_RECONNECT_REPLAY_SECONDS',
+    default=300,
+    cast=int,
+)
+CHAT_RECONNECT_REPLAY_MAX_MESSAGES = config(
+    'CHAT_RECONNECT_REPLAY_MAX_MESSAGES',
+    default=100,
     cast=int,
 )
 
