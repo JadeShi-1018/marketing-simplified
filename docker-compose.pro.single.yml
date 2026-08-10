@@ -88,6 +88,12 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD:-}
       # Wildcard keeps Django's postgres/test database management connections valid.
       - DB_NAME=*
+      # PostgreSQL 14+ defaults to scram-sha-256. PgBouncer cannot derive a
+      # SCRAM secret from a stored md5 hash, so without this it fails every
+      # upstream login with "cannot do SCRAM authentication: wrong password
+      # type" and the pool never fills. Override only for an older server
+      # that still uses md5.
+      - AUTH_TYPE=${PGBOUNCER_AUTH_TYPE:-scram-sha-256}
       - POOL_MODE=session
       - SERVER_RESET_QUERY=DISCARD ALL
       - MAX_CLIENT_CONN=300
