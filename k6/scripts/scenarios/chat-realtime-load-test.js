@@ -21,7 +21,10 @@ const config = JSON.parse(open(__ENV.CREDENTIALS_FILE || '/data/users.json'));
 const users = new SharedArray('chat load users', () => config.users);
 const vus = Number(__ENV.VUS || Math.min(users.length, 10));
 const sessionSeconds = Number(__ENV.SESSION_SECONDS || 20);
-const warmupSeconds = Number(__ENV.WARMUP_SECONDS || 0);
+// Every VU must have finished connecting and joined its groups before any
+// of them writes, or the run measures arrival order rather than delivery.
+// Verified by chat_ready_after_barrier, which has to stay at 0.
+const warmupSeconds = Number(__ENV.WARMUP_SECONDS || 15);
 const httpTimeoutSeconds = Number(__ENV.HTTP_TIMEOUT_SECONDS || 15);
 const baseUrl = (__ENV.K6_BASE_URL || 'http://backend-dev:8000').replace(/\/$/, '');
 const wsBaseUrl = (__ENV.K6_WS_URL || baseUrl.replace(/^http/, 'ws')).replace(/\/$/, '');
@@ -34,6 +37,11 @@ const wsDeliveryMs = new Trend('chat_ws_delivery_ms', true);
 const wsMessages = new Counter('chat_ws_messages_received');
 const wsDuplicates = new Counter('chat_ws_duplicate_messages');
 const wsErrors = new Counter('chat_ws_errors');
+// A VU that only becomes ready after the write barrier has opened was not
+// part of the burst: peers were already publishing while it was still
+// connecting, so any message it missed says nothing about delivery.
+// This must be 0 for a run's delivery count to mean anything.
+const readyAfterBarrier = new Counter('chat_ready_after_barrier');
 
 export const options = {
   scenarios: {
@@ -101,6 +109,7 @@ export default function (data) {
 
         if (event.type === 'presence_snapshot' && !sent) {
           sent = true;
+          readyAfterBarrier.add(Date.now() > data.sendAt ? 1 : 0);
           socket.setTimeout(() => {
             const clientMessageId = `${data.runId}-${credential.user_id}-${__VU}`;
             const headers = {
