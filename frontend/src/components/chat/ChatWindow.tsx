@@ -165,6 +165,7 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
 
     if (ordered.length === 0) {
       setHasUnseenPin(false);
+      useChatStore.getState().clearChatPinUnseen(chat.id);
       return;
     }
 
@@ -176,11 +177,18 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
       const latest = ordered[0];
       const latestTime = Date.parse(latest.created_at);
       const seenTime = seen.createdAt ? Date.parse(seen.createdAt) : Number.NEGATIVE_INFINITY;
-      setHasUnseenPin(latestTime > seenTime || (latestTime === seenTime && latest.id > (seen.id ?? 0)));
+      const isUnseen = latestTime > seenTime || (latestTime === seenTime && latest.id > (seen.id ?? 0));
+      setHasUnseenPin(isUnseen);
+      if (isUnseen) {
+        useChatStore.getState().markChatPinUnseen(chat.id);
+      } else {
+        useChatStore.getState().clearChatPinUnseen(chat.id);
+      }
     } catch {
       setHasUnseenPin(true);
+      useChatStore.getState().markChatPinUnseen(chat.id);
     }
-  }, [pinSeenStorageKey]);
+  }, [chat.id, pinSeenStorageKey]);
 
   const refreshPins = useCallback(async (showError = false) => {
     try {
@@ -201,7 +209,8 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
       // The banner can still be used when storage is disabled.
     }
     setHasUnseenPin(false);
-  }, [pinSeenStorageKey, pins]);
+    useChatStore.getState().clearChatPinUnseen(chat.id);
+  }, [chat.id, pinSeenStorageKey, pins]);
 
   // Load channel highlights and private saved IDs whenever the active chat changes.
   useEffect(() => {

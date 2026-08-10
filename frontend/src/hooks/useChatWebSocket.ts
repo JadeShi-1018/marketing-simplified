@@ -126,6 +126,12 @@ export function useChatWebSocket(
               handlersRef.current.onReactionUpdate?.(data);
               break;
             case 'pin_update':
+              if (data.action === 'pinned') {
+                const chatId = Number(data.chat_id);
+                if (Number.isFinite(chatId)) {
+                  useChatStore.getState().markChatPinUnseen(chatId);
+                }
+              }
               handlersRef.current.onPinUpdate?.(data);
               break;
             case 'presence_update':
