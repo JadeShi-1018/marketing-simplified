@@ -38,12 +38,18 @@ def retry_policy(max_retries=3,  retry_delay= 5,on_exhausted='fail'):
     """
     def decorator(func):
         def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
+
+            #The retry properties are overriden by per-step configuration if that exists.
+            effective_max_retries = args[0].config.get('max_retries', max_retries)
+            effective_retry_delay = args[0].config.get('retry_delay', retry_delay)
+            effective_on_exhausted = args[0].config.get('on_exhausted', on_exhausted)
+
+            for attempt in range(effective_max_retries):
                 try:
                     return func(*args, **kwargs)
                 except (anthropic.APITimeoutError, RuntimeError) as e:
-                    if attempt == max_retries -1:
-                        if on_exhausted == 'fail':
+                    if attempt == effective_max_retries -1:
+                        if effective_on_exhausted == 'fail':
                             return StepResult(success=False, error=str(e), skipped=False)
                         else:
                             return StepResult(success=False, error=str(e), skipped=True)
@@ -52,10 +58,10 @@ def retry_policy(max_retries=3,  retry_delay= 5,on_exhausted='fail'):
                             "LLM call failed: %s. Retry %s/%s in %ss.",
                             e,
                             attempt + 1,
-                            max_retries - 1,
-                            retry_delay,
+                            effective_max_retries - 1,
+                            effective_retry_delay,
                         )
-                        time.sleep(retry_delay)
+                        time.sleep(effective_retry_delay)
         return wrapper
     return decorator
 

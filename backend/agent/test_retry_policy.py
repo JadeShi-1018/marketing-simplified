@@ -39,9 +39,9 @@ class _SessionStub:
         return None
 
 class _StepStub:
-    def __init__(self, step_type):
+    def __init__(self, step_type, config=None):
         self.step_type = step_type
-        self.config = {}
+        self.config = config or {}
 
 class _OrchestratorStub:
     def __init__(self):
@@ -63,8 +63,32 @@ class LLMRetryPolicyTests(TestCase):
         result = executor.execute({'spreadsheet_data': 'some data'})
         self.assertEqual(mock_run_analysis.call_count, 3)
         self.assertTrue(result.success)
-    
-    
+
+
+    @patch('agent.executors.time.sleep')
+    @patch('agent.services._run_analysis')
+    def test_call_llm_retries_respects_per_step_config_override(self, mock_run_analysis, mock_sleep):
+        """
+        step.config overrides the decorator's default max_retries.
+        AnalyzeDataExecutor normally retries 3 times; with
+        config={'max_retries': 1}, retry_policy should try only once and
+        skip straight to the on_exhausted branch instead of sleeping and
+        retrying.
+        """
+        step = _StepStub('analyze_data', config={'max_retries': 1})
+        orchestrator = _OrchestratorStub()
+        workflow_run = _WorkflowRunStub()
+        executor = AnalyzeDataExecutor(step, workflow_run, orchestrator)
+        mock_run_analysis.side_effect = RuntimeError('API timeout')
+
+        result = executor.execute({'spreadsheet_data': 'some data'})
+
+        self.assertEqual(mock_run_analysis.call_count, 1)
+        mock_sleep.assert_not_called()
+        self.assertFalse(result.success)
+        self.assertFalse(result.skipped)
+
+
     @patch('agent.executors.time.sleep')
     @patch('agent.services._run_analysis')
     def test_call_llm_retries_out_failure_failed_step(self, mock_run_analysis, mock_sleep):
