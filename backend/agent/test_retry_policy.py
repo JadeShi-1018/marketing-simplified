@@ -1,5 +1,8 @@
-from unittest.mock import MagicMock, patch
-from agent.executors import AnalyzeDataExecutor, CallLLMExecutor, DetectColumnsExecutor
+import anthropic
+import httpx
+import requests
+from unittest.mock import MagicMock, call, patch
+from agent.executors import AnalyzeDataExecutor, CallLLMExecutor, DetectColumnsExecutor, GenerateCriteriaExecutor
 from django.test import TestCase
 
 class _WorkflowRunStub:
@@ -108,6 +111,73 @@ class LLMRetryPolicyTests(TestCase):
         result = executor.execute({'spreadsheet_data': 'some data'})
         self.assertTrue(result.success)
         self.assertEqual(mock_call_llm.call_count, 1)
+
+
+    @patch('agent.gemini_client.time.sleep')
+    @patch('agent.gemini_client._get_api_key')
+    @patch('agent.gemini_client.requests.post')
+    @patch('agent.llm_client.call_llm')
+    def test_generate_criteria_gemini_429_exhausted_skips_without_extra_retries(
+        self, mock_call_llm, mock_post, mock_gemini_key, mock_sleep,
+    ):
+        from agent.gemini_client import _gemini_request_with_retry
+
+        mock_gemini_key.return_value = 'fake-key'
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.raise_for_status.side_effect = requests.exceptions.HTTPError(
+            response=mock_response
+        )
+        mock_post.return_value = mock_response
+
+        def call_llm_side_effect(*args, **kwargs):
+            # Runs the real global retry/backoff loop against the mocked 429 response.
+            _gemini_request_with_retry('https://example.invalid', {})
+
+        mock_call_llm.side_effect = call_llm_side_effect
+
+        step = _StepStub('generate_criteria')
+        orchestrator = _OrchestratorStub()
+        workflow_run = _WorkflowRunStub()
+        executor = GenerateCriteriaExecutor(step, workflow_run, orchestrator)
+
+        result = executor.execute({
+            'spreadsheet_data': {'sheets': [{'columns': ['a', 'b'], 'rows': []}]},
+        })
+
+        self.assertEqual(mock_post.call_count, 4)
+        self.assertEqual(mock_call_llm.call_count, 1)
+        mock_sleep.assert_has_calls([call(2.0), call(4.0), call(8.0)])
+        self.assertEqual(mock_sleep.call_count, 3)
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.skipped)
+
+
+    @patch('agent.executors.time.sleep')
+    @patch('agent.services._call_llm')
+    @patch('agent.services._get_llm_client')
+    def test_call_llm_anthropic_timeout_no_extra_retries(
+        self, mock_get_client, mock_call_llm, mock_sleep,
+    ):
+        mock_get_client.return_value = MagicMock()
+        mock_call_llm.side_effect = anthropic.APITimeoutError(
+            request=httpx.Request('POST', 'https://api.anthropic.com/v1/messages')
+        )
+
+        step = _StepStub('call_llm')
+        orchestrator = _OrchestratorStub()
+        workflow_run = _WorkflowRunStub()
+        executor = CallLLMExecutor(step, workflow_run, orchestrator)
+
+        result = executor.execute({'spreadsheet_data': 'some data'})
+
+        self.assertEqual(mock_call_llm.call_count, 1)
+        mock_sleep.assert_not_called()
+
+        self.assertFalse(result.success)
+        self.assertFalse(result.skipped)
 
 
 

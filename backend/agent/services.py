@@ -2355,6 +2355,8 @@ class AgentOrchestrator:
                     execution.status = 'skipped'
                     execution.completed_at = tz.now()
                     execution.save(update_fields=['status', 'updated_at'])
+
+                    logger.warning("Workflow step skipped after retries exhausted: run_id=%s, step=%s, step_type=%s", workflow_run.id, step.name, step.step_type)
                     
                     #Provide explanation for users to understand why this step didn't run
                     yield {
