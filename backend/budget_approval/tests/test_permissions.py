@@ -262,6 +262,12 @@ class TestOrgAdminApprovalOverridePermissions:
         )
         linked = response.data['task'].get('linked_object') or {}
         assert linked.get('is_admin_override') is True
+        audit = linked.get('admin_override') or {}
+        assert audit.get('override_by_user_id') == org_admin.id
+        assert audit.get('override_type') == 'org_admin'
+        assert audit.get('final_outcome') == 'approve'
+        assert audit.get('replaced_step') is not None
+        assert audit.get('override_timestamp')
 
         from django.db import connection
         from core.services.tenant import slug_to_schema_name
@@ -297,6 +303,55 @@ class TestOrgAdminApprovalOverridePermissions:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] == BudgetRequestStatus.APPROVED
         assert response.data['budget_request']['is_admin_override'] is True
+        audit = response.data['budget_request']['admin_override']
+        assert audit['override_by_user_id'] == org_admin.id
+        assert audit['override_type'] == 'org_admin'
+        assert audit['final_outcome'] == 'approve'
+        assert audit['override_timestamp']
+
+    def test_get_detail_after_override_returns_structured_admin_override(
+        self, api_client, org_admin, budget_request_under_review, team, user1, user2
+    ):
+        """PATCH decision then GET detail: structured audit is readable on the resource."""
+        task = budget_request_under_review.task
+        task.current_approval_step = 1
+        task.save(update_fields=['current_approval_step'])
+
+        api_client.force_authenticate(user=org_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+        decision_url = reverse(
+            'budget-request-decision',
+            kwargs={'pk': budget_request_under_review.id},
+        )
+        decide = api_client.patch(
+            decision_url,
+            {'decision': 'approve', 'comment': 'Org-admin override'},
+            format='json',
+        )
+        assert decide.status_code == status.HTTP_200_OK, decide.data
+
+        api_client.force_authenticate(user=user1)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='team_member',
+            HTTP_X_TEAM_ID=str(team.id),
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+        detail_url = reverse(
+            'budget-request-detail',
+            kwargs={'pk': budget_request_under_review.id},
+        )
+        response = api_client.get(detail_url)
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert response.data['is_admin_override'] is True
+        audit = response.data['admin_override']
+        assert audit['override_by_user_id'] == org_admin.id
+        assert audit['override_type'] == 'org_admin'
+        assert audit['replaced_step'] == 1
+        assert audit['final_outcome'] == 'approve'
+        assert audit['override_timestamp']
 
     def test_org_admin_can_reject_outside_chain(
         self, api_client, org_admin, budget_request_under_review, team, user2
@@ -320,6 +375,9 @@ class TestOrgAdminApprovalOverridePermissions:
         assert response.status_code == status.HTTP_200_OK
         assert response.data['status'] == BudgetRequestStatus.REJECTED
         assert response.data['budget_request']['is_admin_override'] is True
+        audit = response.data['budget_request']['admin_override']
+        assert audit['override_by_user_id'] == org_admin.id
+        assert audit['final_outcome'] == 'reject'
 
     def test_approval_permission_object_allows_org_admin(
         self, org_admin, budget_request_under_review, user2
@@ -505,6 +563,7 @@ class TestOrgAdminApprovalOverridePermissions:
         )
         linked = response.data['task'].get('linked_object') or {}
         assert linked.get('is_admin_override') is False
+        assert linked.get('admin_override') in (None, {})
 
         from django.db import connection
         from core.services.tenant import slug_to_schema_name

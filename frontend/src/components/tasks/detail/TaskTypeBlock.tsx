@@ -41,6 +41,7 @@ const REDUNDANT_ID_KEYS = new Set([
   // budget
   'current_approver', 'ad_channel', 'budget_pool_id', 'budget_pool_composite', 'is_escalated', 'status',
   'is_admin_override',
+  'admin_override',
   // asset
   'owner',
   // retrospective

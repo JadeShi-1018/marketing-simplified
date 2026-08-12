@@ -3,7 +3,8 @@ from django.db import transaction, OperationalError
 from django.db.models import Max
 from .models import BudgetRequest, BudgetPool, BudgetEscalationRule, BudgetRequestStatus
 from .approver_access import (
-    ORG_ADMIN_OVERRIDE_PREFIX,
+    format_org_admin_override_marker,
+    infer_replaced_step,
     is_org_admin_override_action,
     user_may_process_budget_approval,
 )
@@ -45,16 +46,26 @@ class BudgetRequestService:
         return budget_pool.available_amount >= amount
     
     @staticmethod
-    def _write_org_admin_override_audit(budget_request, approver, is_approved, comment):
+    def _write_org_admin_override_audit(
+        budget_request, approver, is_approved, comment, replaced_step=None
+    ):
         """Persist override audit without a new migration (ApprovalRecord + notes marker)."""
+        from django.utils import timezone
         from task.models import ApprovalRecord
 
-        user_comment = (comment or "").strip()
-        audit_comment = (
-            f"{ORG_ADMIN_OVERRIDE_PREFIX} {user_comment}".strip()
-            if user_comment
-            else ORG_ADMIN_OVERRIDE_PREFIX
+        decision = 'approve' if is_approved else 'reject'
+        if replaced_step is None:
+            replaced_step = infer_replaced_step(budget_request)
+        timestamp = timezone.now().isoformat()
+        marker = format_org_admin_override_marker(
+            user_id=approver.id,
+            decision=decision,
+            replaced_step=replaced_step,
+            timestamp=timestamp,
         )
+
+        user_comment = (comment or "").strip()
+        audit_comment = f"{marker} {user_comment}".strip() if user_comment else marker
 
         task = budget_request.task
         if task is not None:
@@ -69,14 +80,10 @@ class BudgetRequestService:
             )
 
         # Notes marker keeps override discoverable on BudgetRequest itself (and
-        # covers requests with no linked task).
-        decision = 'approve' if is_approved else 'reject'
-        line = (
-            f"{ORG_ADMIN_OVERRIDE_PREFIX} user_id={approver.id} "
-            f"decision={decision}"
-        )
+        # covers requests with no linked task). Includes replaced_step so GET
+        # can return structured audit without a new column.
         existing = (budget_request.notes or "").strip()
-        budget_request.notes = f"{existing}\n{line}".strip() if existing else line
+        budget_request.notes = f"{existing}\n{marker}".strip() if existing else marker
         budget_request.save(update_fields=['notes'])
 
     @staticmethod
@@ -213,6 +220,8 @@ class BudgetRequestService:
 
         # Capture before mutation: override = org-admin acting outside the chain
         is_override = is_org_admin_override_action(approver, budget_request)
+        # Record the replaced chain step before we advance current_approval_step.
+        replaced_step = infer_replaced_step(budget_request) if is_override else None
 
         # MED-240: org-admin replaces the current step only. Next person comes from
         # the original ApprovalChain (not a client-supplied next_approver).
@@ -278,6 +287,7 @@ class BudgetRequestService:
                     approver=approver,
                     is_approved=is_approved,
                     comment=comment,
+                    replaced_step=replaced_step,
                 )
 
             return locked_request

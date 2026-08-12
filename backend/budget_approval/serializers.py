@@ -18,6 +18,7 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
     submitted_at = serializers.ReadOnlyField()
     is_escalated = serializers.SerializerMethodField()
     is_admin_override = serializers.SerializerMethodField()
+    admin_override = serializers.SerializerMethodField()
     budget_pool_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     budget_pool = serializers.SerializerMethodField()
     current_approver = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=False, allow_null=True)
@@ -29,12 +30,13 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
         model = BudgetRequest
         fields = [
             'id', 'task', 'requested_by', 'amount', 'currency', 'status',
-            'submitted_at', 'is_escalated', 'is_admin_override', 'budget_pool', 'budget_pool_id',
+            'submitted_at', 'is_escalated', 'is_admin_override', 'admin_override',
+            'budget_pool', 'budget_pool_id',
             'notes', 'current_approver', 'current_approver_name', 'ad_channel', 'ad_channel_name',
         ]
         read_only_fields = [
             'id', 'requested_by', 'status', 'submitted_at', 'is_escalated',
-            'is_admin_override', 'budget_pool',
+            'is_admin_override', 'admin_override', 'budget_pool',
         ]
 
     def get_requested_by(self, obj):
@@ -49,6 +51,10 @@ class BudgetRequestSerializer(serializers.ModelSerializer):
     def get_is_admin_override(self, obj):
         from .approver_access import budget_request_has_admin_override
         return budget_request_has_admin_override(obj)
+
+    def get_admin_override(self, obj):
+        from .approver_access import budget_request_admin_override
+        return budget_request_admin_override(obj)
 
     def get_budget_pool(self, obj):
         p = obj.budget_pool

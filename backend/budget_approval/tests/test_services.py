@@ -395,6 +395,10 @@ class TestProcessApproval:
         assert task_row['current_approval_step'] == 2
         assert task_row['current_approver_id'] == user3.id
         mock_notif.notify_budget_forwarded.assert_called_once()
+        from budget_approval.serializers import BudgetRequestSerializer
+        audit = BudgetRequestSerializer(result).data['admin_override']
+        assert audit['replaced_step'] == 1
+        assert 'replaced_step=1' in (result.notes or "")
 
     def test_org_admin_override_finalizes_when_no_next_chain_step(
         self, budget_request_under_review, org_admin, user2, project
@@ -441,6 +445,8 @@ class TestProcessApproval:
         assert budget_request_under_review.current_approver_id == user2.id
         task = budget_request_under_review.task
         assert task is not None
+        task.current_approval_step = 1
+        task.save(update_fields=['current_approval_step'])
 
         with patch('budget_approval.services.budget_notifications'):
             result = BudgetRequestService.process_approval(
@@ -464,6 +470,14 @@ class TestProcessApproval:
 
         payload = BudgetRequestSerializer(result).data
         assert payload['is_admin_override'] is True
+        audit = payload['admin_override']
+        assert audit is not None
+        assert audit['override_by_user_id'] == org_admin.id
+        assert audit['override_type'] == 'org_admin'
+        assert audit['final_outcome'] == 'approve'
+        assert audit['replaced_step'] == 1
+        assert audit['override_timestamp']
+        assert f'replaced_step=1' in (result.notes or "")
 
     def test_chain_approver_does_not_write_override_audit(
         self, budget_request_under_review, user2
@@ -513,6 +527,8 @@ class TestProcessApproval:
         assert result.status == BudgetRequestStatus.APPROVED
         assert budget_request_has_admin_override(result) is False
         assert ORG_ADMIN_OVERRIDE_PREFIX not in (result.notes or "")
+        from budget_approval.serializers import BudgetRequestSerializer
+        assert BudgetRequestSerializer(result).data['admin_override'] is None
 
     def test_raises_when_not_under_review(self, budget_request_draft, user2):
         with pytest.raises(ValidationError, match="cannot be processed"):

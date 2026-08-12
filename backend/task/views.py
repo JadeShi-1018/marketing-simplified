@@ -1356,13 +1356,17 @@ class TaskViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
                     else task.approval_records.count() + 1
                 )
                 # Attribute the decision to the actor (org-admin on override, not the chain assignee).
-                from budget_approval.approver_access import ORG_ADMIN_OVERRIDE_PREFIX
+                from budget_approval.approver_access import (
+                    format_org_admin_override_marker,
+                )
                 record_comment = comment
                 if is_admin_override:
                     decision = 'approve' if is_approved else 'reject'
-                    marker = (
-                        f'{ORG_ADMIN_OVERRIDE_PREFIX} user_id={request.user.id} '
-                        f'decision={decision}'
+                    marker = format_org_admin_override_marker(
+                        user_id=request.user.id,
+                        decision=decision,
+                        replaced_step=step_number,
+                        timestamp=timezone.now().isoformat(),
                     )
                     record_comment = f'{marker}\n{comment}'.strip() if comment else marker
                 ApprovalRecord.objects.create(

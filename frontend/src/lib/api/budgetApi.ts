@@ -40,6 +40,15 @@ export interface BudgetTaskCapabilities {
   cancel: boolean;
 }
 
+/** Org-admin override audit (MED-240). Parsed from notes / ApprovalRecord, no extra column. */
+export interface AdminOverrideAudit {
+  override_by_user_id: number | null;
+  override_type: "org_admin";
+  replaced_step: number | null;
+  override_timestamp: string | null;
+  final_outcome: "approve" | "reject" | null;
+}
+
 /** Nested pool on budget task (summary serializer). */
 export interface BudgetPoolSummary {
   id: number;
@@ -99,6 +108,8 @@ export interface BudgetTaskDetail {
   can: BudgetTaskCapabilities;
   /** True when an org-admin decided outside the assigned chain (MED-240). */
   is_admin_override?: boolean;
+  /** Structured override audit parsed from the notes marker (no extra DB column). */
+  admin_override?: AdminOverrideAudit | null;
   submitted_at?: string | null;
   approved_at?: string | null;
   activated_at?: string | null;
@@ -118,6 +129,7 @@ export type BudgetRequestData = BudgetTaskDetail & {
   ad_channel_detail?: { name?: string | null } | null;
   is_escalated?: boolean;
   is_admin_override?: boolean;
+  admin_override?: AdminOverrideAudit | null;
   notes?: string | null;
 };
 
