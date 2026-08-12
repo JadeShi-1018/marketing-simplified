@@ -716,6 +716,11 @@ formatter = json_log_formatter.JSONFormatter()
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'filters': {
+        'redact_secrets': {
+            '()': 'agent.log_redaction.RedactSecretsFilter',
+        },
+    },
     'formatters': {
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
@@ -728,21 +733,24 @@ LOGGING = {
         'json': {
             '()': 'pythonjsonlogger.jsonlogger.JsonFormatter',
             'format': '%(asctime)s %(name)s %(levelname)s %(message)s'
-        },        
+        },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+            'filters': ['redact_secrets'],
         },
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'json',
-        },        
+            'filters': ['redact_secrets'],
+        },
     },
     'root': {
         'handlers': ['console'],
         'level': 'INFO',
+        'filters': ['redact_secrets'],
     },
     'loggers': {
         'django': {
