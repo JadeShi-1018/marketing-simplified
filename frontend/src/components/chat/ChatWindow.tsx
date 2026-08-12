@@ -190,10 +190,21 @@ export default function ChatWindow({ chat, onBack, roleByUserId, routeChatSlug, 
     }
   }, [chat.id, pinSeenStorageKey]);
 
+  // Every pin_update event triggers a refetch, so a rapid pin/unpin sequence has
+  // several of these in flight at once and they do not have to resolve in order.
+  // Switching channels starts another one without cancelling the previous
+  // channel's. Only the newest request may write, so a late reply cannot
+  // reinstate a stale list or show one channel's pins on another.
+  const pinRequestGenerationRef = useRef(0);
+
   const refreshPins = useCallback(async (showError = false) => {
+    const generation = ++pinRequestGenerationRef.current;
     try {
-      applyPins(await listPins(chat.slug));
+      const rows = await listPins(chat.slug);
+      if (generation !== pinRequestGenerationRef.current) return;
+      applyPins(rows);
     } catch {
+      if (generation !== pinRequestGenerationRef.current) return;
       if (showError) toast.error('Could not load pinned messages');
     }
   }, [applyPins, chat.slug]);

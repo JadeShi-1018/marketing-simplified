@@ -1016,7 +1016,12 @@ class PinnedMessageSerializer(serializers.ModelSerializer):
 class PinMessageRequestSerializer(serializers.Serializer):
     """Validate the message identifier used by pin and unpin actions."""
 
-    message_id = serializers.IntegerField(min_value=1)
+    # Bounded by what the column can hold, not by an arbitrary limit: Message
+    # uses BigAutoField, and DRF's IntegerField accepts any Python int, so
+    # without the ceiling an oversized id passes validation and only fails once
+    # PostgreSQL rejects it as out of range for bigint — a 500 for what is
+    # plainly a malformed request.
+    message_id = serializers.IntegerField(min_value=1, max_value=2 ** 63 - 1)
 
 
 class SavedMessageSerializer(serializers.ModelSerializer):

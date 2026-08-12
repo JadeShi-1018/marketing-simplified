@@ -277,7 +277,10 @@ class TestPinnedMessagesAPI:
         assert response.status_code == status.HTTP_200_OK
         assert response.data == []
 
-    @pytest.mark.parametrize('message_id', [None, 'not-a-number', 0, -1])
+    @pytest.mark.parametrize(
+        'message_id',
+        [None, 'not-a-number', 0, -1, 2 ** 63],  # 2**63 overflows the bigint column
+    )
     def test_pin_rejects_invalid_message_id(self, message_id):
         payload = {} if message_id is None else {'message_id': message_id}
 
