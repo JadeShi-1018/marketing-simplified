@@ -22,6 +22,11 @@ _RATE_LIMIT_MAX_ATTEMPTS = 4
 _RATE_LIMIT_BACKOFF_SECONDS = (2.0, 4.0, 8.0)
 
 
+class GeminiRetriesExhausted(Exception):
+    """Raised when Gemini's own HTTP 429 retries are exhausted."""
+    pass
+
+
 def _get_api_key() -> str:
     return (
         getattr(settings, "GEMINI_API_KEY", "")
@@ -62,13 +67,13 @@ def _gemini_request_with_retry(
                 time.sleep(wait_seconds)
                 continue
             if status_code == 429:
-                raise RuntimeError("Gemini rate limited (HTTP 429).") from exc
+                raise GeminiRetriesExhausted("Gemini rate limited (HTTP 429).") from exc
             raise RuntimeError(
                 f"Gemini request failed with HTTP {status_code or 'unknown'}."
             ) from exc
         except requests.exceptions.RequestException as exc:
             raise RuntimeError("Gemini network error.") from exc
-    raise RuntimeError("Gemini rate limited (HTTP 429).") from last_http_error
+    raise GeminiRetriesExhausted("Gemini rate limited (HTTP 429).") from last_http_error
 
 
 def call_gemini(
