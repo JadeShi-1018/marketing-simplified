@@ -203,7 +203,8 @@ class BudgetRequestService:
             to ensure consistency with the database state after the atomic transaction.
             The original object's ID remains unchanged - only the Python object reference changes.
         """
-        # Chain approver, superuser, or same-org org-admin override (MED-240)
+        # Backend is the only enforcement (UI buttons are not authorization).
+        # Chain approver, superuser, or same-org org-admin override (MED-240).
         if not user_may_process_budget_approval(approver, budget_request):
             raise ValidationError("Only the assigned approver can process this request")
         

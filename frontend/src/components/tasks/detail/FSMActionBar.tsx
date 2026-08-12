@@ -64,7 +64,8 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
     currentUser?.id != null &&
     task.current_approver?.id != null &&
     Number(currentUser.id) === Number(task.current_approver.id);
-  // MED-240: same-org org-admin may approve/reject budget tasks outside the chain.
+  // MED-240: show Approve/Reject for org-admin on budget tasks. Backend
+  // (user_may_process_budget_approval) is the only enforcement; this is UI only.
   const isOrgAdmin = Boolean(currentUser?.is_org_admin);
   const canApprove =
     isCurrentApprover || (isOrgAdmin && task.type === 'budget');

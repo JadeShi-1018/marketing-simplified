@@ -355,6 +355,167 @@ class TestOrgAdminApprovalOverridePermissions:
             request, None, budget_request_under_review
         ) is False
 
+    def test_org_admin_of_other_org_cannot_process_approval(
+        self, org_admin, budget_request_different_org, user2
+    ):
+        """Unit: org-admin of org A cannot override a request owned by org B."""
+        from budget_approval.approver_access import (
+            is_org_admin_override_action,
+            user_is_org_admin_for_budget_request,
+            user_may_process_budget_approval,
+        )
+
+        assert budget_request_different_org.current_approver_id == user2.id
+        assert org_admin.id != user2.id
+        assert user_is_org_admin_for_budget_request(
+            org_admin, budget_request_different_org
+        ) is False
+        assert user_may_process_budget_approval(
+            org_admin, budget_request_different_org
+        ) is False
+        assert is_org_admin_override_action(
+            org_admin, budget_request_different_org
+        ) is False
+
+        permission = ApprovalPermission()
+        request = type('Req', (), {
+            'user': org_admin,
+            'method': 'PATCH',
+            'headers': {'x-user-role': 'org_admin'},
+        })()
+        assert permission.has_object_permission(
+            request, None, budget_request_different_org
+        ) is False
+
+    def test_org_admin_cannot_approve_different_organization(
+        self, api_client, budget_request_under_review, team, user2, different_organization
+    ):
+        """API: org-admin of org B cannot approve a request owned by org A (403).
+
+        The request is fetched in org A's tenant (so this is not a 404 from
+        schema isolation); ApprovalPermission then denies the override.
+        """
+        import uuid
+        from django.contrib.auth import get_user_model
+        from core.admin_utils import assign_org_admin
+
+        User = get_user_model()
+        uid = uuid.uuid4().hex[:8]
+        other_admin = User.objects.create_user(
+            username=f'otheradmin_{uid}',
+            email=f'otheradmin_{uid}@test.com',
+            password='testpass123',
+            organization=different_organization,
+            current_organization=different_organization,
+        )
+        assign_org_admin(other_admin, different_organization)
+
+        assert budget_request_under_review.current_approver_id == user2.id
+        assert other_admin.id != user2.id
+
+        api_client.force_authenticate(user=other_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse(
+            'budget-request-decision',
+            kwargs={'pk': budget_request_under_review.id},
+        )
+        response = api_client.patch(
+            url,
+            {'decision': 'approve', 'comment': 'Cross-org should be denied'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_org_admin_who_is_current_approver_is_not_override(
+        self, org_admin, budget_request_under_review
+    ):
+        """Unit: org-admin on the chain is a normal approval, not an override."""
+        from budget_approval.approver_access import (
+            is_org_admin_override_action,
+            user_may_process_budget_approval,
+        )
+
+        budget_request_under_review.current_approver = org_admin
+        budget_request_under_review.save(update_fields=['current_approver'])
+
+        assert user_may_process_budget_approval(
+            org_admin, budget_request_under_review
+        ) is True
+        assert is_org_admin_override_action(
+            org_admin, budget_request_under_review
+        ) is False
+
+    def test_org_admin_as_current_approver_make_approval_is_not_override(
+        self, api_client, org_admin, budget_request_under_review, team, project
+    ):
+        """UI path: org-admin who IS current_approver must not get override audit."""
+        from core.models import ProjectMember
+        from django.contrib.contenttypes.models import ContentType
+        from budget_approval.approver_access import (
+            ORG_ADMIN_OVERRIDE_PREFIX,
+            budget_request_has_admin_override,
+        )
+        from budget_approval.models import BudgetRequest
+        from task.models import Task
+
+        br = budget_request_under_review
+        br.current_approver = org_admin
+        br.save(update_fields=['current_approver'])
+
+        task = br.task
+        task.current_approver = org_admin
+        task.content_type = ContentType.objects.get_for_model(br)
+        task.object_id = br.id
+        task.save(update_fields=['current_approver', 'content_type', 'object_id'])
+        if task.status == Task.Status.DRAFT:
+            task.submit()
+            task.start_review()
+            task.save()
+        elif task.status == Task.Status.SUBMITTED:
+            task.start_review()
+            task.save()
+        assert task.status == Task.Status.UNDER_REVIEW
+
+        ProjectMember.objects.get_or_create(
+            user=org_admin,
+            project=project,
+            defaults={'is_active': True},
+        )
+
+        api_client.force_authenticate(user=org_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
+        response = api_client.post(
+            url,
+            {'action': 'approve', 'comment': 'Admin is the assigned approver'},
+            format='json',
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.data
+        assert ORG_ADMIN_OVERRIDE_PREFIX not in (
+            response.data.get('approval_record', {}).get('comment') or ''
+        )
+        linked = response.data['task'].get('linked_object') or {}
+        assert linked.get('is_admin_override') is False
+
+        from django.db import connection
+        from core.services.tenant import slug_to_schema_name
+
+        schema = slug_to_schema_name(team.organization.slug)
+        with connection.cursor() as cursor:
+            cursor.execute(f'SET search_path TO {schema}, public')
+        br = BudgetRequest.objects.get(pk=br.pk)
+        assert br.status == BudgetRequestStatus.APPROVED
+        assert budget_request_has_admin_override(br) is False
+
 
 @pytest.mark.django_db
 @pytest.mark.timeout(600)

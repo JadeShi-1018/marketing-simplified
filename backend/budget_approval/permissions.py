@@ -109,7 +109,11 @@ class BudgetRequestPermission(permissions.BasePermission):
 
 
 class ApprovalPermission(permissions.BasePermission):
-    """Permissions to approve or reject budget requests"""
+    """Permissions to approve or reject budget requests.
+
+    This class (plus BudgetRequestService / make_approval) is the authorization
+    gate. Frontend Approve/Reject visibility is not a security boundary.
+    """
     
     def has_permission(self, request, view):
         """Check if the user has permission to access the decision API"""

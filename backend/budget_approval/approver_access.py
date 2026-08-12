@@ -1,6 +1,10 @@
 """Who may approve/reject a budget request (chain approver vs org-admin override).
 
 Shared by DRF permissions and BudgetRequestService so both gates use one rule.
+
+MED-240 enforcement lives only on the backend. The UI (FSMActionBar Approve/Reject)
+is a convenience: hiding or showing buttons must never be treated as authorization.
+Org is resolved from budget_pool → project → organization, never from the client.
 """
 
 from __future__ import annotations
@@ -41,7 +45,11 @@ def user_is_org_admin_for_budget_request(user, budget_request) -> bool:
 
 
 def user_may_process_budget_approval(user, budget_request) -> bool:
-    """Superuser, current chain approver, or same-org org-admin (MED-240)."""
+    """Backend-only gate: superuser, current chain approver, or same-org org-admin.
+
+    Callers (ApprovalPermission, BudgetRequestService, TaskAPI.make_approval) must
+    use this helper. Frontend `is_org_admin` only controls button visibility.
+    """
     if user is None or budget_request is None:
         return False
 
@@ -55,7 +63,11 @@ def user_may_process_budget_approval(user, budget_request) -> bool:
 
 
 def is_org_admin_override_action(user, budget_request) -> bool:
-    """True when a same-org org-admin acts while not the assigned chain approver."""
+    """True when a same-org org-admin acts while not the assigned chain approver.
+
+    If the org-admin *is* the current chain approver, this is a normal approval
+    (no override marker, `is_admin_override` stays false).
+    """
     if user is None or budget_request is None:
         return False
     if budget_request.current_approver_id == getattr(user, 'id', None):

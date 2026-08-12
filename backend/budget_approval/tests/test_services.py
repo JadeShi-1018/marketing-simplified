@@ -490,6 +490,30 @@ class TestProcessApproval:
         assert ORG_ADMIN_OVERRIDE_PREFIX not in (result.notes or "")
         assert ApprovalRecord.objects.filter(task=task).count() == before
 
+    def test_org_admin_as_current_approver_does_not_write_override_audit(
+        self, budget_request_under_review, org_admin
+    ):
+        """MED-240: org-admin who is the assigned approver is not an override."""
+        from budget_approval.approver_access import (
+            ORG_ADMIN_OVERRIDE_PREFIX,
+            budget_request_has_admin_override,
+        )
+
+        budget_request_under_review.current_approver = org_admin
+        budget_request_under_review.save(update_fields=['current_approver'])
+
+        with patch('budget_approval.services.budget_notifications'):
+            result = BudgetRequestService.process_approval(
+                budget_request_under_review,
+                org_admin,
+                is_approved=True,
+                comment="Admin is on the chain",
+            )
+
+        assert result.status == BudgetRequestStatus.APPROVED
+        assert budget_request_has_admin_override(result) is False
+        assert ORG_ADMIN_OVERRIDE_PREFIX not in (result.notes or "")
+
     def test_raises_when_not_under_review(self, budget_request_draft, user2):
         with pytest.raises(ValidationError, match="cannot be processed"):
             BudgetRequestService.process_approval(
