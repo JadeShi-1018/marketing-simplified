@@ -12,6 +12,8 @@ import time
 import requests
 from django.conf import settings
 
+from agent.log_redaction import redact_string
+
 logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.5-flash-lite"
@@ -69,10 +71,10 @@ def _gemini_request_with_retry(
             if status_code == 429:
                 raise GeminiRetriesExhausted("Gemini rate limited (HTTP 429).") from exc
             raise RuntimeError(
-                f"Gemini request failed with HTTP {status_code or 'unknown'}."
+                redact_string(f"Gemini request failed with HTTP {status_code or 'unknown'}.")
             ) from exc
         except requests.exceptions.RequestException as exc:
-            raise RuntimeError("Gemini network error.") from exc
+            raise RuntimeError(redact_string(f"Gemini network error: {exc}")) from exc
     raise GeminiRetriesExhausted("Gemini rate limited (HTTP 429).") from last_http_error
 
 
