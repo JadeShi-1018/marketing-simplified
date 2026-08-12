@@ -199,6 +199,79 @@ class TestOrgAdminApprovalOverridePermissions:
       - superuser                  → already covered
     """
 
+    def test_team_member_cannot_approve_via_decision_api(
+        self, api_client, user3, budget_request_under_review, team, user_role3, role_permissions
+    ):
+        """MED-240: non-approver team member → PATCH decision is 403 (API enforcement)."""
+        assert budget_request_under_review.current_approver_id != user3.id
+
+        api_client.force_authenticate(user=user3)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='team_member',
+            HTTP_X_TEAM_ID=str(team.id),
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse(
+            'budget-request-decision',
+            kwargs={'pk': budget_request_under_review.id},
+        )
+        response = api_client.patch(
+            url,
+            {'decision': 'approve', 'comment': 'Member must not approve'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_team_member_cannot_make_approval_on_budget_task(
+        self, api_client, user3, budget_request_under_review, team, user2, project, user_role3
+    ):
+        """MED-240: non-approver team member → POST make-approval is 403."""
+        from core.models import ProjectMember
+        from django.contrib.contenttypes.models import ContentType
+        from budget_approval.models import BudgetRequest
+        from task.models import Task
+
+        br = budget_request_under_review
+        assert br.current_approver_id == user2.id
+        assert user3.id != user2.id
+
+        task = br.task
+        task.current_approver = user2
+        task.content_type = ContentType.objects.get_for_model(BudgetRequest)
+        task.object_id = br.id
+        task.save(update_fields=['current_approver', 'content_type', 'object_id'])
+        if task.status == Task.Status.DRAFT:
+            task.submit()
+            task.start_review()
+            task.save()
+        elif task.status == Task.Status.SUBMITTED:
+            task.start_review()
+            task.save()
+        assert task.status == Task.Status.UNDER_REVIEW
+
+        ProjectMember.objects.get_or_create(
+            user=user3,
+            project=project,
+            defaults={'is_active': True},
+        )
+
+        api_client.force_authenticate(user=user3)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='team_member',
+            HTTP_X_TEAM_ID=str(team.id),
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+
+        url = reverse('task-make-approval', kwargs={'pk': task.slug})
+        response = api_client.post(
+            url,
+            {'action': 'approve', 'comment': 'Member must not approve'},
+            format='json',
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert 'designated approver' in (response.data.get('error') or '').lower()
+
     def test_org_admin_can_approve_via_task_make_approval(
         self, api_client, org_admin, budget_request_under_review, team, user2, project
     ):

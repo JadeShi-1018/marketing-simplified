@@ -8,6 +8,8 @@ import type { ProjectMemberData } from '@/lib/api/projectApi';
 import InlineSelect, { UserInitialsAvatar, type InlineSelectOption } from './InlineSelect';
 import { getTypeSchema } from '@/lib/tasks/typeFieldSchemas';
 import { useAuthStore } from '@/lib/authStore';
+import { useProjectStore } from '@/lib/projectStore';
+import { canOrgAdminOverrideBudgetUi } from '@/lib/budget/orgAdminOverrideUi';
 
 type Variant = 'primary' | 'ghost' | 'danger';
 
@@ -60,17 +62,20 @@ export default function FSMActionBar({ task, members, onMutated }: Props) {
   const [forwardApprover, setForwardApprover] = useState<number | null>(null);
 
   const currentUser = useAuthStore((s) => s.user);
+  const activeProject = useProjectStore((s) => s.activeProject);
   const isCurrentApprover =
     currentUser?.id != null &&
     task.current_approver?.id != null &&
     Number(currentUser.id) === Number(task.current_approver.id);
-  // MED-240: show Approve/Reject for org-admin on budget tasks. Backend
+  // MED-240: show Approve/Reject for same-org org-admin on budget tasks. Backend
   // (user_may_process_budget_approval) is the only enforcement; this is UI only.
-  const isOrgAdmin = Boolean(currentUser?.is_org_admin);
-  const canApprove =
-    isCurrentApprover || (isOrgAdmin && task.type === 'budget');
-  const isAdminOverride =
-    isOrgAdmin && !isCurrentApprover && task.type === 'budget';
+  const canOrgAdminOverride = canOrgAdminOverrideBudgetUi(
+    currentUser,
+    task,
+    activeProject,
+  );
+  const canApprove = isCurrentApprover || canOrgAdminOverride;
+  const isAdminOverride = canOrgAdminOverride && !isCurrentApprover;
 
   const isOwner =
     currentUser?.id != null &&
