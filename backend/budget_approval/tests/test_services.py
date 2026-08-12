@@ -13,6 +13,7 @@ from django.core.exceptions import ValidationError
 
 from budget_approval.models import BudgetPool, BudgetRequest, BudgetRequestStatus
 from budget_approval.services import BudgetRequestService, BudgetPoolService
+from budget_approval.exceptions import ApprovalConflict
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +400,80 @@ class TestProcessApproval:
         audit = BudgetRequestSerializer(result).data['admin_override']
         assert audit['replaced_step'] == 1
         assert 'replaced_step=1' in (result.notes or "")
+
+    def test_stale_step1_approver_conflicts_after_override_advances(
+        self, budget_request_under_review, org_admin, user2, user3, project
+    ):
+        """MED-240: after override moves to step 2, a stale step-1 approve must 409.
+
+        Simulates the in-flight request that passed the lock-outer permission
+        check while current_approver was still user2.
+        """
+        from task.models import ApprovalChain, ApprovalChainStep
+
+        task = budget_request_under_review.task
+        chain = ApprovalChain.objects.create(
+            name="Buyer → Lead",
+            project=project,
+            task_type="budget",
+        )
+        ApprovalChainStep.objects.create(chain=chain, order=1, approver=user2)
+        ApprovalChainStep.objects.create(chain=chain, order=2, approver=user3)
+        task.approval_chain = chain
+        task.current_approval_step = 1
+        task.current_approver = user2
+        task.save(
+            update_fields=['approval_chain', 'current_approval_step', 'current_approver']
+        )
+
+        stale = budget_request_under_review
+        assert stale.current_approver_id == user2.id
+
+        with patch('budget_approval.services.budget_notifications'):
+            result = BudgetRequestService.process_approval(
+                stale,
+                org_admin,
+                is_approved=True,
+                comment="Override step 1",
+            )
+
+        assert result.status == BudgetRequestStatus.UNDER_REVIEW
+        assert result.current_approver_id == user3.id
+        # Original Python object was not refreshed — still looks like step 1.
+        assert stale.current_approver_id == user2.id
+
+        with patch('budget_approval.services.budget_notifications'):
+            with pytest.raises(ApprovalConflict):
+                BudgetRequestService.process_approval(
+                    stale,
+                    user2,
+                    is_approved=True,
+                    comment="Late step-1 approve",
+                )
+
+        fresh = BudgetRequest.objects.get(pk=result.pk)
+        assert fresh.current_approver_id == user3.id
+        assert fresh.status == BudgetRequestStatus.UNDER_REVIEW
+
+    def test_second_approve_on_same_step_raises_conflict(
+        self, budget_request_under_review, user2
+    ):
+        """Duplicate approve after a final decision is a conflict, not a 400."""
+        with patch('budget_approval.services.budget_notifications'):
+            BudgetRequestService.process_approval(
+                budget_request_under_review,
+                user2,
+                is_approved=True,
+                comment="First",
+            )
+        with patch('budget_approval.services.budget_notifications'):
+            with pytest.raises(ApprovalConflict):
+                BudgetRequestService.process_approval(
+                    budget_request_under_review,
+                    user2,
+                    is_approved=True,
+                    comment="Duplicate click",
+                )
 
     def test_org_admin_override_finalizes_when_no_next_chain_step(
         self, budget_request_under_review, org_admin, user2, project

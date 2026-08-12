@@ -2,6 +2,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction, OperationalError
 from django.db.models import Max
 from .models import BudgetRequest, BudgetPool, BudgetEscalationRule, BudgetRequestStatus
+from .exceptions import ApprovalConflict
 from .approver_access import (
     format_org_admin_override_marker,
     infer_replaced_step,
@@ -188,7 +189,39 @@ class BudgetRequestService:
                 trigger_escalation.delay(budget_request.id)
             
             return budget_request
-    
+
+    _DECIDED_STATUSES = (
+        BudgetRequestStatus.APPROVED,
+        BudgetRequestStatus.REJECTED,
+        BudgetRequestStatus.LOCKED,
+        BudgetRequestStatus.CANCELLED,
+    )
+
+    @staticmethod
+    def _raise_if_not_processable(budget_request):
+        """409 if another actor already decided; 400 if the status is not reviewable."""
+        if budget_request.status in BudgetRequestService._DECIDED_STATUSES:
+            raise ApprovalConflict()
+        if not budget_request.can_approve() and not budget_request.can_reject():
+            raise ValidationError("Budget request cannot be processed in current status")
+
+    @staticmethod
+    def _raise_if_step_moved(locked_request, approver, *, is_override, expected_approver_id):
+        """Under lock: this actor must still be acting on the same chain step.
+
+        After an override (or chain approve) forwards to the next person, status
+        is UNDER_REVIEW again. Without this check the loser of the race would
+        approve the *next* step.
+        """
+        if getattr(approver, 'is_superuser', False):
+            return
+        if is_override:
+            if locked_request.current_approver_id != expected_approver_id:
+                raise ApprovalConflict()
+            return
+        if locked_request.current_approver_id != approver.id:
+            raise ApprovalConflict()
+
     @staticmethod
     def process_approval(budget_request, approver, is_approved, comment, next_approver=None):
         """Process approval or rejection of a budget request
@@ -214,13 +247,13 @@ class BudgetRequestService:
         # Chain approver, superuser, or same-org org-admin override (MED-240).
         if not user_may_process_budget_approval(approver, budget_request):
             raise ValidationError("Only the assigned approver can process this request")
-        
-        if not budget_request.can_approve() and not budget_request.can_reject():
-            raise ValidationError("Budget request cannot be processed in current status")
 
-        # Capture before mutation: override = org-admin acting outside the chain
+        BudgetRequestService._raise_if_not_processable(budget_request)
+
+        # Capture before mutation: override = org-admin acting outside the chain.
+        # These snapshots are what the actor intended to act on; re-checked under lock.
         is_override = is_org_admin_override_action(approver, budget_request)
-        # Record the replaced chain step before we advance current_approval_step.
+        expected_approver_id = budget_request.current_approver_id
         replaced_step = infer_replaced_step(budget_request) if is_override else None
 
         # MED-240: org-admin replaces the current step only. Next person comes from
@@ -237,10 +270,15 @@ class BudgetRequestService:
         with transaction.atomic():
             # Lock the budget request for update to ensure atomic state transition
             locked_request = BudgetRequest.objects.select_for_update().get(id=budget_request.id)
-            
-            # Re-check if the request can still be processed (status might have changed)
-            if not locked_request.can_approve() and not locked_request.can_reject():
-                raise ValidationError("Budget request cannot be processed in current status")
+
+            # Re-read under lock: status and current step may have changed while we waited.
+            BudgetRequestService._raise_if_not_processable(locked_request)
+            BudgetRequestService._raise_if_step_moved(
+                locked_request,
+                approver,
+                is_override=is_override,
+                expected_approver_id=expected_approver_id,
+            )
             
             
             # status: UNDER_REVIEW --> APPROVED

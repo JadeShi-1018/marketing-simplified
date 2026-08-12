@@ -309,6 +309,34 @@ class TestOrgAdminApprovalOverridePermissions:
         assert audit['final_outcome'] == 'approve'
         assert audit['override_timestamp']
 
+    def test_second_decision_returns_409_conflict(
+        self, api_client, org_admin, budget_request_under_review, team, user2
+    ):
+        """Duplicate decision after a final override is 409, not 400."""
+        api_client.force_authenticate(user=org_admin)
+        api_client.credentials(
+            HTTP_X_USER_ROLE='org_admin',
+            HTTP_X_ORGANIZATION_SLUG=team.organization.slug,
+        )
+        url = reverse(
+            'budget-request-decision',
+            kwargs={'pk': budget_request_under_review.id},
+        )
+        first = api_client.patch(
+            url,
+            {'decision': 'approve', 'comment': 'First override'},
+            format='json',
+        )
+        assert first.status_code == status.HTTP_200_OK, first.data
+
+        second = api_client.patch(
+            url,
+            {'decision': 'approve', 'comment': 'Duplicate click'},
+            format='json',
+        )
+        assert second.status_code == status.HTTP_409_CONFLICT
+        assert 'already been decided' in (second.data.get('error') or '').lower()
+
     def test_get_detail_after_override_returns_structured_admin_override(
         self, api_client, org_admin, budget_request_under_review, team, user1, user2
     ):
