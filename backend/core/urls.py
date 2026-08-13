@@ -34,7 +34,7 @@ from core.views import (
     UserOrganizationsView,
     ValidateOrganizationSlugView,
 )
-from core.admin_views import AdminOrganizationViewSet
+from core.admin_views import AdminOrganizationViewSet, RetentionPolicyListView
 from core.quick_start_views import QuickStartConfirmView, QuickStartPreviewView
 
 router = DefaultRouter()
@@ -47,6 +47,7 @@ router.register(
 router.register(r'admin/organizations', AdminOrganizationViewSet, basename='admin-organization')
 
 urlpatterns = [
+    path('admin/retention-policies/', RetentionPolicyListView.as_view(), name='admin-retention-policies'),
     path('check-project-membership/', CheckProjectMembershipView.as_view(), name='check-project-membership'),
     path('onboarding-status/', OnboardingStatusView.as_view(), name='onboarding-status'),
     path('projects/onboarding/', ProjectOnboardingView.as_view(), name='project-onboarding'),

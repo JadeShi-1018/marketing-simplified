@@ -1,14 +1,17 @@
 """Root-admin endpoints for Organization management."""
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from access_control.models import UserRole
 from core.admin_permissions import IsOrgAdmin
 from core.models import Organization, Role
+from core.retention_registry import registry as retention_registry
 
 User = get_user_model()
 
@@ -165,3 +168,30 @@ class AdminOrganizationViewSet(viewsets.ModelViewSet):
             {'detail': f'Removed admin role from {user.email}.'},
             status=status.HTTP_200_OK,
         )
+
+
+class RetentionPolicyListView(APIView):
+    """Read-only: list every registered data-retention rule (MED-341) and its
+    currently configured window. Root admin only. No serializer/model backs
+    this -- data is computed live from the registry + settings, so it can
+    never drift from what the sweep_data_retention Beat task will actually
+    run. retention_days is null when a rule's setting has no value configured
+    (e.g. metric_upload.MetricFile.record by default) -- surfaced as-is
+    rather than papered over with a fake number.
+    """
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+
+    def get(self, request):
+        data = [
+            {
+                'label': rule.label,
+                'description': rule.description,
+                'app_label': rule.app_label,
+                'model_name': rule.model_name,
+                'timestamp_field': rule.timestamp_field,
+                'retention_days_setting': rule.retention_days_setting,
+                'retention_days': getattr(settings, rule.retention_days_setting, None),
+            }
+            for rule in retention_registry.all()
+        ]
+        return Response(data)

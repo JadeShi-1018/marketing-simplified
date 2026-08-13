@@ -9,3 +9,4 @@ class MetricUploadConfig(AppConfig):
     def ready(self):
         """Import signals when app is ready"""
         import metric_upload.signals
+        import metric_upload.retention_rules  # noqa: F401

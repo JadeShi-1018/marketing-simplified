@@ -447,6 +447,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': crontab(hour=3, minute=0),
         'options': {'timezone': 'UTC'},
     },
+    'sweep-data-retention': {
+        'task': 'core.tasks.sweep_data_retention',
+        'schedule': crontab(hour=3, minute=30),  # daily 03:30 UTC (MED-341)
+        'options': {'timezone': 'UTC'},
+    },
     # Notification tasks
     'fire-calendar-reminders': {
         'task': 'notifications.tasks.fire_calendar_reminders',
@@ -830,6 +835,27 @@ TRACKING_SESSION_TIMEOUT_SECONDS = config('TRACKING_SESSION_TIMEOUT_SECONDS', de
 TRACKING_EVENT_FLUSH_SECONDS = config('TRACKING_EVENT_FLUSH_SECONDS', default=10, cast=int)
 TRACKING_EVENT_RETENTION_DAYS = config('TRACKING_EVENT_RETENTION_DAYS', default=90, cast=int)
 TRACKING_SESSION_RETENTION_DAYS = config('TRACKING_SESSION_RETENTION_DAYS', default=180, cast=int)
+
+# Core data retention (MED-341)
+# CORE_/MEETINGS_/CUSTOMER_*_RETENTION_DAYS default to 365 -- the ticket's stated
+# floor ("audit logs >= 1 year"). This is the minimum the ticket names, not a
+# confirmed exact product policy -- override via env if a longer window is decided.
+CORE_ORG_ACTIVITY_EVENT_RETENTION_DAYS = config('CORE_ORG_ACTIVITY_EVENT_RETENTION_DAYS', default=365, cast=int)
+MEETINGS_AUDIT_LOG_RETENTION_DAYS = config('MEETINGS_AUDIT_LOG_RETENTION_DAYS', default=365, cast=int)
+CUSTOMER_NOTE_AUDIT_LOG_RETENTION_DAYS = config('CUSTOMER_NOTE_AUDIT_LOG_RETENTION_DAYS', default=365, cast=int)
+
+# METRIC_UPLOAD_FILE_RETENTION_DAYS defaults to 30 -- the ticket's stated floor
+# ("raw metric uploads >= 30 days") for removing file bytes from disk.
+METRIC_UPLOAD_FILE_RETENTION_DAYS = config('METRIC_UPLOAD_FILE_RETENTION_DAYS', default=30, cast=int)
+
+# METRIC_UPLOAD_RECORD_RETENTION_DAYS (hard-deleting the MetricFile DB row once
+# its file is already cleared) has NO stated floor anywhere in the ticket or
+# repo. Deliberately no default: if unset, sweep_data_retention logs a warning
+# and skips this rule rather than inventing a number. Set this explicitly once
+# a real policy exists.
+METRIC_UPLOAD_RECORD_RETENTION_DAYS = config(
+    'METRIC_UPLOAD_RECORD_RETENTION_DAYS', default=None, cast=lambda v: int(v) if v else None,
+)
 TRACKING_HANDLERS = [
     'task.tracking_handlers.handle_task_request',
 ]

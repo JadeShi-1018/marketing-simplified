@@ -5,15 +5,20 @@ to migrate existing ciphertext to the current active key.
 """
 
 import logging
+from datetime import timedelta
 
 from celery import shared_task
+from django.conf import settings
 from django.utils import timezone
 
 from core.models import DataExportRequest
 from core.crypto import DecryptionError, decrypt_token, encrypt_token, needs_rotation
+from core.retention_registry import registry
 from core.services.privacy_export import assemble_data_export_zip
 
 logger = logging.getLogger(__name__)
+
+_RETENTION_BATCH_SIZE = 5000
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +201,108 @@ def assemble_personal_data_export(self, export_request_id):
         export_request.completed_at = timezone.now()
         export_request.save(update_fields=["status", "failure_reason", "completed_at", "updated_at"])
         raise self.retry(exc=exc)
+
+
+# ---------------------------------------------------------------------------
+# Data retention (MED-341)
+#
+# Each app registers its own RetentionRule(s) with core.retention_registry
+# (see e.g. core/retention_rules.py, meetings/retention_rules.py) via its
+# AppConfig.ready(). This task is the single generic executor: it just
+# iterates whatever has been registered and knows nothing about individual
+# apps' models.
+#
+# No overlap lock for the default (no-custom-cleanup) path: the generic
+# batched-delete loop is naturally idempotent under concurrent/duplicate
+# runs — deleting already-deleted ids is a no-op (0 rows affected), the same
+# reasoning tracking.tasks.purge_old_data already relies on with zero
+# locking. A rule with a custom `cleanup` handler (e.g. MetricFile's
+# filesystem cleanup) does NOT get this guarantee for free — the handler
+# itself is responsible for staying idempotent under a duplicate/concurrent
+# run (see metric_upload/retention_rules.py for how the file-cleanup handler
+# does this: FileNotFoundError counts as success, and the row is only
+# flipped to is_deleted after the file is actually gone).
+# ---------------------------------------------------------------------------
+
+def _batched_delete(Model, queryset) -> dict:
+    """Delete queryset in batches of _RETENTION_BATCH_SIZE. Mirrors
+    tracking.tasks.purge_old_data's id-slice-then-delete loop.
+
+    `deleted` counts only rows of `Model` itself, not any rows cascade-deleted
+    from related models — QuerySet.delete()'s return value is a
+    (total_count, {label: count}) pair where total_count includes cascades,
+    so we pull the target model's own count out of the per-model breakdown.
+    """
+    model_label = f"{Model._meta.app_label}.{Model._meta.object_name}"
+    matched = 0
+    deleted = 0
+    while True:
+        ids = list(queryset.values_list("pk", flat=True)[:_RETENTION_BATCH_SIZE])
+        if not ids:
+            break
+        matched += len(ids)
+        _, breakdown = Model.objects.filter(pk__in=ids).delete()
+        deleted += breakdown.get(model_label, 0)
+    return {"matched": matched, "deleted": deleted}
+
+
+@shared_task(name="core.tasks.sweep_data_retention")
+def sweep_data_retention(dry_run: bool = False) -> dict:
+    """Run every registered RetentionRule.
+
+    dry_run=True performs zero writes (DB or filesystem) — it only reports
+    what a real run would do right now. It is a point-in-time preview, not a
+    frozen plan: it shares the exact same cutoff/eligibility logic as a real
+    run, so a later real run may legitimately report a different matched
+    count if more rows crossed the cutoff in the meantime. Real runs always
+    recompute eligibility at execution time rather than reusing a prior
+    preview's numbers.
+    """
+    from django.apps import apps as django_apps
+
+    now = timezone.now()
+    summary = {"executed_at": now.isoformat(), "dry_run": dry_run, "rules": {}}
+
+    for rule in registry.all():
+        days = getattr(settings, rule.retention_days_setting, None)
+        if days is None:
+            logger.warning(
+                "sweep_data_retention: %s has no value for settings.%s — skipping.",
+                rule.label, rule.retention_days_setting,
+            )
+            summary["rules"][rule.label] = {
+                "skipped": True,
+                "reason": f"no value configured for settings.{rule.retention_days_setting}",
+            }
+            continue
+
+        try:
+            Model = django_apps.get_model(rule.app_label, rule.model_name)
+        except LookupError:
+            logger.warning("sweep_data_retention: model %s.%s not found — skipping.",
+                            rule.app_label, rule.model_name)
+            summary["rules"][rule.label] = {
+                "skipped": True,
+                "reason": f"model {rule.app_label}.{rule.model_name} not found",
+            }
+            continue
+
+        cutoff = now - timedelta(days=days)
+        qs = Model.objects.filter(**{f"{rule.timestamp_field}__lt": cutoff}, **rule.base_filter)
+
+        if rule.cleanup is not None:
+            result = rule.cleanup(rule, qs, dry_run)
+        elif dry_run:
+            result = {"matched": qs.count(), "deleted": 0}
+        else:
+            result = _batched_delete(Model, qs)
+
+        result["cutoff"] = cutoff.isoformat()
+        result["retention_days"] = days
+        logger.info(
+            "sweep_data_retention: rule=%s dry_run=%s cutoff=%s matched=%d deleted=%d",
+            rule.label, dry_run, cutoff.isoformat(), result["matched"], result["deleted"],
+        )
+        summary["rules"][rule.label] = result
+
+    return summary

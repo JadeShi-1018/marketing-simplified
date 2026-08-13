@@ -495,8 +495,11 @@ class MeetingDocument(models.Model):
 
 class MeetingAuditLog(models.Model):
     """
-    Immutable append-only audit log for Meeting and direct-child mutations.
-    Enforced immutable via Postgres BEFORE UPDATE OR DELETE trigger.
+    Append-only audit log for Meeting and direct-child mutations.
+    Enforced immutable via a Postgres BEFORE UPDATE trigger — rows cannot be
+    edited. DELETE is intentionally allowed (see migration
+    0018_fix_audit_trigger_allow_delete) so the MED-341 retention sweep can
+    purge old rows.
     """
 
     # Event type constants

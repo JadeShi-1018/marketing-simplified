@@ -10,3 +10,4 @@ class CoreConfig(AppConfig):
     def ready(self):
         import core.signals  # noqa: F401
         import core.authentication  # noqa: F401
+        import core.retention_rules  # noqa: F401
