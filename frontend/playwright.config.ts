@@ -138,5 +138,12 @@ export default defineConfig({
         /e2e[\\/]messages[\\/]messages-multi-client-render\.spec\.ts$/,
       ],
     },
+    {
+      name: 'budget-mock',
+      use: {
+        ...devices['Desktop Chrome'],
+      },
+      testMatch: /e2e[\\/]budget[\\/]budget-admin-override\.spec\.ts$/,
+    },
   ],
 });
