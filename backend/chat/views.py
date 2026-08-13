@@ -62,6 +62,43 @@ from core.tenant_context import current_tenant_schema
 logger = logging.getLogger(__name__)
 
 
+def queue_pin_update(chat_id, action, message_id, pin_data=None, actor_user_id=None):
+    """Queue a shared pin change for broadcast to a channel's other members.
+
+    Fan-out runs on the dedicated realtime worker rather than inside the
+    request: a large channel would otherwise cost one sequential Channels
+    publication per member before the caller gets a response.
+
+    Shared by the pin/unpin actions and by the delete/revoke paths, which drop
+    a message's pin row as a side effect. Those live on a different viewset,
+    and leaving them out is what let members keep a pin the server had already
+    removed until they reloaded.
+    """
+    chat_id = int(chat_id)
+    tenant_schema = current_tenant_schema()
+
+    def enqueue() -> None:
+        try:
+            notify_pin_update.delay(
+                chat_id,
+                action,
+                message_id,
+                pin_data,
+                tenant_schema=tenant_schema,
+                actor_user_id=actor_user_id,
+            )
+        except Exception:
+            # A broker failure must never roll back a pin change that has
+            # already been persisted successfully. The pin state is durable
+            # either way; what is lost is the live update, so members only see
+            # it after a refresh. Counted as well as logged: this is silent
+            # from the user's side and nobody reads logs looking for it.
+            chat_broadcast_enqueue_failures_total.labels(event='pin').inc()
+            logger.exception('Failed to queue pin update for chat %s', chat_id)
+
+    transaction.on_commit(enqueue)
+
+
 def _encode_search_cursor(message, include_rank=False):
     payload = {
         'created_at': message.created_at.isoformat(),
@@ -197,35 +234,14 @@ class ChatViewSet(SlugLookupViewSetMixin, viewsets.ModelViewSet):
         return ChatService.is_channel_manager(chat, user)
 
     def _notify_pin_update(self, chat, action, message_id, pin_data=None):
-        """Queue a shared pin change for broadcast to every active member.
+        queue_pin_update(
+            chat.id,
+            action,
+            message_id,
+            pin_data=pin_data,
+            actor_user_id=self.request.user.id,
+        )
 
-        Fan-out runs on the dedicated realtime worker rather than inside the
-        request: a large channel would otherwise cost one sequential Channels
-        publication per member before the caller gets a response.
-        """
-        chat_id = chat.id
-        tenant_schema = current_tenant_schema()
-
-        def enqueue() -> None:
-            try:
-                notify_pin_update.delay(
-                    chat_id,
-                    action,
-                    message_id,
-                    pin_data,
-                    tenant_schema=tenant_schema,
-                )
-            except Exception:
-                # A broker failure must never roll back a pin that has already
-                # been persisted successfully. The pin is durable either way;
-                # what is lost is the live update, so members only see it after
-                # a refresh. Counted as well as logged: this is silent from the
-                # user's side and nobody reads logs looking for it.
-                chat_broadcast_enqueue_failures_total.labels(event='pin').inc()
-                logger.exception('Failed to queue pin update for chat %s', chat_id)
-
-        transaction.on_commit(enqueue)
-    
     def get_queryset(self):
         """Get chats where user is a participant"""
         # For actions where the user may not be a member yet, return all chats.
@@ -1503,7 +1519,17 @@ class MessageViewSet(viewsets.ModelViewSet):
         message.is_revoked = True
         message.revoked_at = timezone.now()
         message.save(update_fields=['is_revoked', 'revoked_at', 'updated_at'])
-        PinnedMessage.objects.filter(message=message).delete()
+        # A revoked message is filtered out of the pin list, so the row has to
+        # go — and members holding it on screen have to be told, or their
+        # banner keeps offering a jump to a message that is no longer there.
+        unpinned, _ = PinnedMessage.objects.filter(message=message).delete()
+        if unpinned:
+            queue_pin_update(
+                message.chat_id,
+                'unpinned',
+                message.id,
+                actor_user_id=request.user.id,
+            )
 
         logger.info(f"User {request.user.id} revoked message {message.id}")
 
@@ -1629,7 +1655,16 @@ class MessageViewSet(viewsets.ModelViewSet):
                 'updated_at',
             ])
 
-        PinnedMessage.objects.filter(message=message).delete()
+        # Same reasoning as revoke: dropping the row silently leaves every
+        # other member's pinned list pointing at a deleted message.
+        unpinned, _ = PinnedMessage.objects.filter(message=message).delete()
+        if unpinned:
+            queue_pin_update(
+                message.chat_id,
+                'unpinned',
+                message.id,
+                actor_user_id=request.user.id,
+            )
 
         logger.info(f"User {request.user.id} soft-deleted message {message_id}")
 

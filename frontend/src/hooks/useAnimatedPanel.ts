@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type AnimatedPanelState = 'closed' | 'opening' | 'open' | 'closing';
 
@@ -52,6 +52,11 @@ export function useAnimatedPanel() {
     clearTimer();
     setPanelState('closed');
   }, []);
+
+  // Unmounting mid-transition is ordinary — closing takes 300ms and the user
+  // can navigate away inside it. Nothing else cancels the timer on that path,
+  // so it would fire against a component that no longer exists.
+  useEffect(() => clearTimer, []);
 
   return { panelState: state, openPanel: open, closePanel: close, resetPanel: reset };
 }

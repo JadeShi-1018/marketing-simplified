@@ -14,6 +14,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 from core.tenant_context import tenant_schema_context
 from .models import ChatOutboxEvent, Message, MessageStatus, ChatParticipant, ScheduledMessage, MessageAttachment
+from .metrics import chat_broadcast_publish_failures_total
 from .realtime import broadcast_event_to_user_groups_sync
 from .services import (
     ChatService,
@@ -818,23 +819,33 @@ def notify_pin_update(
     message_id: int,
     pin_data=None,
     tenant_schema: str = 'public',
+    actor_user_id: int = None,
 ):
-    """Broadcast a shared pin change to every active member of a channel.
+    """Broadcast a shared pin change to a channel's other active members.
 
     Args:
         chat_id: ID of the channel whose pins changed
         action: 'pinned' or 'unpinned'
         message_id: ID of the message that was pinned or unpinned
         pin_data: serialised pin row for 'pinned'; None for 'unpinned'
+        actor_user_id: the member who made the change, excluded from the
+            broadcast because their own client already applied it. Optional so
+            tasks queued by an older release still run after a deploy.
 
     The payload is serialised by the request so recipients keep the absolute
     avatar URLs the request context produces.
     """
     try:
-        participant_ids = list(ChatParticipant.objects.filter(
+        recipients = ChatParticipant.objects.filter(
             chat_id=chat_id,
             is_active=True,
-        ).values_list('user_id', flat=True))
+        )
+        if actor_user_id is not None:
+            # Their client acknowledged the change on the HTTP response; sending
+            # it back marks the channel as having an unseen pin they created
+            # themselves.
+            recipients = recipients.exclude(user_id=actor_user_id)
+        participant_ids = list(recipients.values_list('user_id', flat=True))
 
         channel_layer = get_channel_layer()
         if not channel_layer:
@@ -852,6 +863,11 @@ def notify_pin_update(
             },
         )
 
+        if failed:
+            # The request already returned 200, so nothing else records that
+            # these members never got the update.
+            chat_broadcast_publish_failures_total.labels(event='pin').inc(len(failed))
+
         logger.info(
             "notify_pin_update: chat=%s action=%s message=%s recipients=%s sent=%s failed=%s",
             chat_id,
@@ -864,6 +880,9 @@ def notify_pin_update(
 
     except Exception:
         # A broadcast failure must never undo a pin that is already persisted.
+        # Counted too: a channel layer that is down fails every pin this way,
+        # and a log line nobody greps is not a signal.
+        chat_broadcast_publish_failures_total.labels(event='pin').inc()
         logger.exception(
             "notify_pin_update failed for chat %s message %s", chat_id, message_id
         )

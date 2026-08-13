@@ -905,12 +905,22 @@ export default function ChannelDetailsDrawer({
     }
   };
 
+  // pinRefreshKey bumps on every pin_update the channel receives, so several of
+  // these can be in flight at once and they need not resolve in order. Only the
+  // newest may write, or a late reply reinstates a list the server has already
+  // moved past. Switching channels re-enters this too, which is what stops one
+  // channel's pins rendering inside another.
+  const pinRequestGenerationRef = useRef(0);
+  const chatScopedRequestGenerationRef = useRef(0);
+
   const fetchPins = useCallback(async () => {
+    const generation = ++pinRequestGenerationRef.current;
     setPinsLoaded(true);
     setPinsLoading(true);
     setPinsError(null);
     try {
       const rows = await listPins(chat.slug);
+      if (generation !== pinRequestGenerationRef.current) return;
       setPins(
         [...rows].sort((a, b) => {
           const timeDifference = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
@@ -918,9 +928,10 @@ export default function ChannelDetailsDrawer({
         }),
       );
     } catch {
+      if (generation !== pinRequestGenerationRef.current) return;
       setPinsError('Could not load pinned messages.');
     } finally {
-      setPinsLoading(false);
+      if (generation === pinRequestGenerationRef.current) setPinsLoading(false);
     }
   }, [chat.slug]);
 
@@ -933,16 +944,31 @@ export default function ChannelDetailsDrawer({
 
   // Fetch counts on mount so each section header shows its count even before
   // it's expanded. The onOpen loaders below become no-ops once *Loaded is true.
+  // Both responses belong to one channel, and switching channels does not
+  // cancel the request the previous one started. Without the check, its reply
+  // lands afterwards and fills this drawer with the other channel's contents.
   useEffect(() => {
+    // Comparing against a captured chat.id would not work: the closure holds
+    // the value from its own render, so it always matches itself. The counter
+    // lives outside the render and is what actually advances on a switch.
+    const generation = ++chatScopedRequestGenerationRef.current;
+    const isStale = () => generation !== chatScopedRequestGenerationRef.current;
+
     setFilesLoaded(true);
     setFilesLoading(true);
     listChatFiles(chat.id)
-      .then(({ results, total }) => { setFiles(results); setFilesTotal(total); })
+      .then(({ results, total }) => {
+        if (isStale()) return;
+        setFiles(results);
+        setFilesTotal(total);
+      })
       .catch(() => {})
-      .finally(() => setFilesLoading(false));
+      .finally(() => { if (!isStale()) setFilesLoading(false); });
 
     setScheduledLoaded(true);
-    listScheduledMessages(chat.id).then(setScheduled).catch(() => {});
+    listScheduledMessages(chat.id)
+      .then((rows) => { if (!isStale()) setScheduled(rows); })
+      .catch(() => {});
   }, [chat.id]);
 
   const loadPins = useCallback(() => {

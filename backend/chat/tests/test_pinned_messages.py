@@ -541,3 +541,75 @@ class TestPinnedMessagesAPI:
         assert event['action'] == 'pinned'
         assert event['chat_id'] == self.chat.id
         assert event['pin'] == pin_data
+
+    def test_queued_pin_broadcast_excludes_the_member_who_made_the_change(self):
+        """Their own client applied the change on the HTTP response.
+
+        Sending it back marks the channel as holding a pin they have not seen,
+        for a pin they created themselves.
+        """
+        with patch('chat.tasks.broadcast_event_to_user_groups_sync') as broadcast:
+            broadcast.return_value = ([], {})
+            notify_pin_update(
+                self.chat.id,
+                'pinned',
+                self.message.id,
+                {'id': 1},
+                actor_user_id=self.manager.id,
+            )
+
+        assert set(broadcast.call_args.args[1]) == {self.member.id}
+
+    @pytest.mark.parametrize(
+        'url_name,method',
+        [('message-detail', 'delete'), ('message-revoke', 'post')],
+    )
+    def test_removing_a_pinned_message_broadcasts_the_unpin(
+        self,
+        url_name,
+        method,
+        django_capture_on_commit_callbacks,
+    ):
+        """Deleting or revoking drops the pin row, and members have to be told.
+
+        Without the broadcast their banner keeps offering a jump to a message
+        that is gone, until they reload or switch channels.
+        """
+        PinnedMessage.objects.create(
+            chat=self.chat,
+            message=self.second_message,
+            pinned_by=self.manager,
+        )
+        url = reverse(url_name, kwargs={'pk': self.second_message.id})
+
+        with patch('chat.views.notify_pin_update') as queued_task:
+            with django_capture_on_commit_callbacks(execute=True):
+                response = getattr(self.client, method)(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        queued_task.delay.assert_called_once()
+        chat_id, action, message_id, pin_data = queued_task.delay.call_args.args
+        assert chat_id == self.chat.id
+        assert action == 'unpinned'
+        assert message_id == self.second_message.id
+        assert pin_data is None
+
+    @pytest.mark.parametrize(
+        'url_name,method',
+        [('message-detail', 'delete'), ('message-revoke', 'post')],
+    )
+    def test_removing_an_unpinned_message_broadcasts_nothing(
+        self,
+        url_name,
+        method,
+        django_capture_on_commit_callbacks,
+    ):
+        """No pin row, nothing for anyone to update."""
+        url = reverse(url_name, kwargs={'pk': self.second_message.id})
+
+        with patch('chat.views.notify_pin_update') as queued_task:
+            with django_capture_on_commit_callbacks(execute=True):
+                response = getattr(self.client, method)(url)
+
+        assert response.status_code == status.HTTP_200_OK
+        queued_task.delay.assert_not_called()
