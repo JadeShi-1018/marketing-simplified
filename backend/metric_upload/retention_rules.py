@@ -11,8 +11,8 @@ _ITER_CHUNK_SIZE = 500
 
 
 def _cleanup_metric_files(rule, queryset, dry_run):
-    """Remove file bytes from disk for old MetricFile rows not yet cleared
-    (base_filter is_deleted=False), then mark them cleared.
+    """Remove file bytes from disk for old MetricFile rows and hard-delete
+    the row in the same run -- there is no separate record-retention stage.
 
     storage_key is entirely server-generated (metric_upload/models.py:
     get_storage_key, read_only on MetricFileSerializer, set once in
@@ -25,20 +25,15 @@ def _cleanup_metric_files(rule, queryset, dry_run):
         deleted          os.remove() actually removed bytes THIS run
         already_missing  bytes were already gone (FileNotFoundError) --
                           desired state reached, but not removed by this run
-        errors           any other OSError; row is left uncleared and will
-                          be retried on the next run
+        errors           any other OSError (including the containment
+                          check failing); row is left in place and will be
+                          retried on the next run
 
     `deleted` is therefore an exact count of files this run itself removed,
     not a "desired state reached" count -- that's what already_missing is
-    for. Both `deleted` and `already_missing` rows get is_deleted=True,
-    since either way the file no longer exists.
-
-    End state is idempotent under a concurrent/duplicate run: a row is only
-    flipped to is_deleted after its bytes are confirmed gone (removed by
-    this run, or already absent). Per-run counters are still not
-    exactly-once ACROSS concurrent runs, though -- two overlapping workers
-    racing the same row can split the outcome between them (one gets
-    deleted, the other gets already_missing for the same file).
+    for. Both `deleted` and `already_missing` rows get their DB row
+    hard-deleted, since either way the file no longer exists. Concurrency
+    is not handled for this ticket.
     """
     if dry_run:
         return {"matched": queryset.count(), "deleted": 0, "already_missing": 0, "errors": 0}
@@ -73,8 +68,7 @@ def _cleanup_metric_files(rule, queryset, dry_run):
             errors += 1
             continue
 
-        metric_file.is_deleted = True
-        metric_file.save(update_fields=["is_deleted", "updated_at"])
+        metric_file.delete()
 
     return {"matched": matched, "deleted": deleted, "already_missing": already_missing, "errors": errors}
 
@@ -85,17 +79,7 @@ registry.register(RetentionRule(
     model_name="MetricFile",
     timestamp_field="created_at",
     retention_days_setting="METRIC_UPLOAD_FILE_RETENTION_DAYS",
-    description="MetricFile: remove uploaded file bytes from disk (row is kept, marked cleared).",
+    description="MetricFile: remove uploaded file bytes from disk and hard-delete the row.",
     base_filter={"is_deleted": False},
     cleanup=_cleanup_metric_files,
-))
-
-registry.register(RetentionRule(
-    label="metric_upload.MetricFile.record",
-    app_label="metric_upload",
-    model_name="MetricFile",
-    timestamp_field="created_at",
-    retention_days_setting="METRIC_UPLOAD_RECORD_RETENTION_DAYS",
-    description="MetricFile: hard-delete the DB row once its file bytes are already cleared.",
-    base_filter={"is_deleted": True},
 ))

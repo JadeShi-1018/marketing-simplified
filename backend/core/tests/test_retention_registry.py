@@ -53,14 +53,8 @@ class ProductionRegistryTest(SimpleTestCase):
                 "meetings.MeetingAuditLog",
                 "customer.CustomerInternalNoteAuditLog",
                 "metric_upload.MetricFile.file",
-                "metric_upload.MetricFile.record",
             },
         )
-
-    def test_metric_file_record_rule_has_no_custom_cleanup(self):
-        rule = next(r for r in production_registry.all() if r.label == "metric_upload.MetricFile.record")
-        self.assertIsNone(rule.cleanup)
-        self.assertEqual(rule.base_filter, {"is_deleted": True})
 
     def test_metric_file_file_rule_has_custom_cleanup(self):
         rule = next(r for r in production_registry.all() if r.label == "metric_upload.MetricFile.file")

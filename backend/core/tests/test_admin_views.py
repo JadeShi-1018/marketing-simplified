@@ -14,7 +14,6 @@ EXPECTED_LABELS = {
     "meetings.MeetingAuditLog",
     "customer.CustomerInternalNoteAuditLog",
     "metric_upload.MetricFile.file",
-    "metric_upload.MetricFile.record",
 }
 
 
@@ -36,10 +35,7 @@ class RetentionPolicyListViewTest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-    @override_settings(
-        CORE_ORG_ACTIVITY_EVENT_RETENTION_DAYS=365,
-        METRIC_UPLOAD_RECORD_RETENTION_DAYS=None,
-    )
+    @override_settings(CORE_ORG_ACTIVITY_EVENT_RETENTION_DAYS=365)
     def test_org_admin_gets_200_with_every_registered_rule(self):
         admin_user = User.objects.create_user(username="admin", email="admin@test.com", organization=self.org)
         assign_org_admin(admin_user, self.org)
@@ -55,10 +51,6 @@ class RetentionPolicyListViewTest(APITestCase):
         # A configured rule reports the real integer window pinned above, not
         # whatever settings.py's default happens to be today.
         self.assertEqual(by_label["core.OrganizationActivityEvent"]["retention_days"], 365)
-        # An unconfigured rule reports null, not an invented number.
-        self.assertIsNone(
-            by_label["metric_upload.MetricFile.record"]["retention_days"]
-        )
 
     def test_response_has_no_delete_or_toggle_affordance_fields(self):
         """The endpoint is read-only -- the ticket explicitly needs no

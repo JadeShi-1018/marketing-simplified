@@ -845,17 +845,11 @@ MEETINGS_AUDIT_LOG_RETENTION_DAYS = config('MEETINGS_AUDIT_LOG_RETENTION_DAYS', 
 CUSTOMER_NOTE_AUDIT_LOG_RETENTION_DAYS = config('CUSTOMER_NOTE_AUDIT_LOG_RETENTION_DAYS', default=365, cast=int)
 
 # METRIC_UPLOAD_FILE_RETENTION_DAYS defaults to 30 -- the ticket's stated floor
-# ("raw metric uploads >= 30 days") for removing file bytes from disk.
+# ("raw metric uploads >= 30 days") for removing file bytes from disk and
+# hard-deleting the MetricFile row (single stage -- no separate record
+# retention rule).
 METRIC_UPLOAD_FILE_RETENTION_DAYS = config('METRIC_UPLOAD_FILE_RETENTION_DAYS', default=30, cast=int)
 
-# METRIC_UPLOAD_RECORD_RETENTION_DAYS (hard-deleting the MetricFile DB row once
-# its file is already cleared) has NO stated floor anywhere in the ticket or
-# repo. Deliberately no default: if unset, sweep_data_retention logs a warning
-# and skips this rule rather than inventing a number. Set this explicitly once
-# a real policy exists.
-METRIC_UPLOAD_RECORD_RETENTION_DAYS = config(
-    'METRIC_UPLOAD_RECORD_RETENTION_DAYS', default=None, cast=lambda v: int(v) if v else None,
-)
 TRACKING_HANDLERS = [
     'task.tracking_handlers.handle_task_request',
 ]

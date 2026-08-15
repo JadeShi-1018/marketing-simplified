@@ -9,7 +9,7 @@ from freezegun import freeze_time
 from core.models import Organization, OrganizationActivityEvent
 
 
-@override_settings(CORE_ORG_ACTIVITY_EVENT_RETENTION_DAYS=30, METRIC_UPLOAD_RECORD_RETENTION_DAYS=None)
+@override_settings(CORE_ORG_ACTIVITY_EVENT_RETENTION_DAYS=30)
 class PreviewDataRetentionCommandTest(TestCase):
     def setUp(self):
         self.org = Organization.objects.create(name="Preview Cmd Org", email_domain="preview-cmd.example.com")
@@ -39,11 +39,3 @@ class PreviewDataRetentionCommandTest(TestCase):
 
         self.assertIn("core.OrganizationActivityEvent: 1 row(s) matched", output)
         self.assertIn("Dry run only", output)
-
-    def test_skipped_rule_is_rendered_explicitly_not_silently_omitted(self):
-        out = StringIO()
-        call_command("preview_data_retention", stdout=out)
-        output = out.getvalue()
-
-        self.assertIn("metric_upload.MetricFile.record: SKIPPED", output)
-        self.assertIn("METRIC_UPLOAD_RECORD_RETENTION_DAYS", output)

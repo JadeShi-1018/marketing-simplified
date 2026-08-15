@@ -176,8 +176,7 @@ class RetentionPolicyListView(APIView):
     this -- data is computed live from the registry + settings, so it can
     never drift from what the sweep_data_retention Beat task will actually
     run. retention_days is null when a rule's setting has no value configured
-    (e.g. metric_upload.MetricFile.record by default) -- surfaced as-is
-    rather than papered over with a fake number.
+    -- surfaced as-is rather than papered over with a fake number.
     """
     permission_classes = [IsAuthenticated, IsOrgAdmin]
 
