@@ -10,12 +10,7 @@ import {
   Bot, ChevronsUpDown, ChevronDown, ChevronRight,
   Target, Mail, Notebook, Facebook, Video, Presentation,
   User as UserIcon, CreditCard, Plug, LogOut, Headset,
-<<<<<<< HEAD
-  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank, Database,
-=======
-  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank,
-  History,
->>>>>>> upstream/prod-preview
+  Shield, UserCog, UserCheck, BarChart3, Sparkles, PiggyBank, Database, History
 } from 'lucide-react';
 import { useProjects } from '@/hooks/useProjects';
 import { useAuthStore } from '@/lib/authStore';
@@ -142,11 +137,8 @@ const adminGroup: NavGroup = {
     { label: 'Roles', href: '/admin/roles', icon: UserCog },
     { label: 'Permissions', href: '/admin/permissions', icon: Shield },
     { label: 'Approvers', href: '/admin/approvers', icon: UserCheck },
-<<<<<<< HEAD
     { label: 'Data Retention', href: '/admin/data-retention', icon: Database },
-=======
     { label: 'Override Audit Log', href: '/admin/override-audits', icon: History },
->>>>>>> upstream/prod-preview
   ],
 };
 
